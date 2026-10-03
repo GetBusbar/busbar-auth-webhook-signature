@@ -22,3 +22,4 @@ busbar-contract = { workspace = true }
 # The conformance test loads the linked door and dlopens the built cdylib over busbar's REAL loader:
 # dev-only, never in the shipped artifact.
 busbar-plugin-loader = { workspace = true }
+serde_json = { workspace = true }
