@@ -29,8 +29,8 @@ publish = false
 repository = "https://github.com/GetBusbar/busbar-auth-webhook-signature"
 
 [workspace.dependencies]
-busbar-contract = { git = "https://github.com/GetBusbar/busbar", rev = "86904c800d802a69f15371c4d6e407483b495215" }
-busbar-plugin-loader = { git = "https://github.com/GetBusbar/busbar", rev = "86904c800d802a69f15371c4d6e407483b495215" }
+busbar-contract = { git = "https://github.com/GetBusbar/busbar", rev = "e1d3d8b097201859751d77208e66249d98b50a4b" }
+busbar-plugin-loader = { git = "https://github.com/GetBusbar/busbar", rev = "e1d3d8b097201859751d77208e66249d98b50a4b" }
 # busbar's root [workspace.dependencies], third-party rows, at 86904c800d802a69f15371c4d6e407483b495215
 a2a-lf = "0.3.0"
 a2a-pb = "0.2.0"
