@@ -19,3 +19,5 @@ crate-type = ["rlib"]
 # serves through the connector.
 [dependencies]
 busbar-contract = { workspace = true }
+# The settings document.
+serde_json = { workspace = true }
