@@ -1,6 +1,6 @@
 {
   "settings": "{\"variant\":\"twilio\",\"origin\":\"https://conformance.invalid\",\"subject\":\"conformance-sender\"}",
-  "secrets": ["conformance-twilio-auth-token"],
+  "open_secrets": ["conformance-twilio-auth-token"],
   "auth": {
     "bad_settings": [
       "{ not json",
