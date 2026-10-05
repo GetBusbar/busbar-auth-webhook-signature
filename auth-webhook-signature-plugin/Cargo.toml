@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 [package]
 name = "busbar-auth-webhook-signature-plugin"
-version = "0.1.0"
+version = "1.6.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,7 +19,7 @@ busbar-auth-webhook-signature = { path = "../auth-webhook-signature" }
 busbar-contract = { workspace = true }
 
 [dev-dependencies]
-# The conformance test loads the linked door and dlopens the built cdylib over busbar's REAL loader:
-# dev-only, never in the shipped artifact.
-busbar-plugin-loader = { workspace = true }
-serde_json = { workspace = true }
+# busbar's published conformance suite (`tests/conformance.rs`) and the door's own both-ways proof
+# (`tests/door_both_ways.rs`) load the linked door and dlopen the built cdylib over busbar's REAL
+# loader: dev-only, never in the shipped artifact.
+busbar-plugin-loader = { workspace = true, features = ["conformance"] }
