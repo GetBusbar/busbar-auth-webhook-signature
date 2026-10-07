@@ -25,7 +25,7 @@ jobs:
     secrets: inherit
   release:
     needs: ci
-    uses: GetBusbar/busbar/.github/workflows/plugin-release.yml@42e298cbe3fcc27b4960a1b21eb91a19412b8743
+    uses: GetBusbar/busbar/.github/workflows/plugin-release.yml@70776f1d367caac1a0c47a96acf7dffb8f86df1b
     with:
       plugin_crate: busbar-auth-webhook-signature-plugin
       manifest_name: busbar-auth-webhook-signature
@@ -41,7 +41,7 @@ jobs:
   consumer-verify:
     needs: release
     if: ${{ !cancelled() }}
-    uses: GetBusbar/busbar/.github/workflows/plugin-consumer-verify.yml@42e298cbe3fcc27b4960a1b21eb91a19412b8743
+    uses: GetBusbar/busbar/.github/workflows/plugin-consumer-verify.yml@70776f1d367caac1a0c47a96acf7dffb8f86df1b
     with:
       version: ${{ github.ref_name }}
       asset_prefix: busbar-auth-webhook-signature
