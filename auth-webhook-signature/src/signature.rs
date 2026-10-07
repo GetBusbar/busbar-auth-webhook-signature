@@ -20,6 +20,7 @@
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use ring::hmac;
+use zeroize::Zeroizing;
 
 // ── twilio ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -138,13 +139,19 @@ pub fn body_sha256_matches(body: &[u8], expected_hex: &[u8]) -> bool {
 // ── standard-webhooks ───────────────────────────────────────────────────────────────────────────
 
 /// The signing key of a Standard Webhooks secret: base64, with an optional `whsec_` prefix.
-/// `None` = not base64, or empty.
+/// `None` = not base64, or empty. The key is decoded into a buffer sized once and wiped on drop
+/// (THE DESIGN §6: "auth material is zeroised").
 #[must_use]
-pub fn standard_webhooks_key(secret: &[u8]) -> Option<Vec<u8>> {
-    let b64 = secret.strip_prefix(b"whsec_").unwrap_or(secret);
+pub fn standard_webhooks_key(secret: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+    let b64 = secret
+        .strip_prefix(b"whsec_")
+        .unwrap_or(secret)
+        .trim_ascii();
+    let mut key = Zeroizing::new(Vec::with_capacity(b64.len() / 4 * 3 + 3));
     STANDARD
-        .decode(b64.trim_ascii())
+        .decode_vec(b64, &mut key)
         .ok()
+        .map(|()| key)
         .filter(|k| !k.is_empty())
 }
 

@@ -136,7 +136,7 @@ const SW_BODY: &[u8] = br#"{"test": 2432232314}"#;
 const SW_PUBLISHED: &[u8] = b"v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=";
 const FIVE_MIN: u64 = 300;
 
-fn sw_key() -> Vec<u8> {
+fn sw_key() -> Zeroizing<Vec<u8>> {
     standard_webhooks_key(SW_SECRET).expect("a whsec_ secret")
 }
 

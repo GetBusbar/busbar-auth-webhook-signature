@@ -211,8 +211,9 @@ impl<'a> Request<'a> {
 /// One configured instance: its settings and its signing key.
 pub struct WebhookSignature {
     settings: Settings,
-    /// The HMAC key: the token as given (`twilio`), or the decoded secret (`standard-webhooks`).
-    key: Vec<u8>,
+    /// The HMAC key: the token as given (`twilio`), or the decoded secret (`standard-webhooks`),
+    /// wiped on drop (THE DESIGN §6: "auth material is zeroised").
+    key: zeroize::Zeroizing<Vec<u8>>,
 }
 
 impl std::fmt::Debug for WebhookSignature {
@@ -240,7 +241,7 @@ impl WebhookSignature {
             return Err("secrets: the signing secret is empty");
         }
         let key = match settings.variant {
-            Variant::Twilio => secret.to_vec(),
+            Variant::Twilio => zeroize::Zeroizing::new(secret.to_vec()),
             Variant::StandardWebhooks => signature::standard_webhooks_key(secret).ok_or(
                 "secrets: a standard-webhooks secret is base64, optionally `whsec_`-prefixed",
             )?,
