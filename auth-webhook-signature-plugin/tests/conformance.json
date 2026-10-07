@@ -1,0 +1,23 @@
+{
+  "settings": "{\"variant\":\"twilio\",\"origin\":\"https://conformance.invalid\",\"subject\":\"conformance-sender\"}",
+  "open_secrets": ["conformance-twilio-auth-token"],
+  "auth": {
+    "bad_settings": [
+      "{ not json",
+      "{\"variant\":\"twilio\"}",
+      "{\"variant\":\"standard-webhooks\",\"origin\":\"https://conformance.invalid\"}"
+    ],
+    "rotated_settings": "{\"variant\":\"twilio\",\"origin\":\"https://other.invalid\",\"subject\":\"conformance-sender\"}",
+    "cases": [
+      { "credential": null, "carriers": { "x-twilio-signature": "g4j77HfpeVqAY454YjxDNdsK/2U=" }, "verdict": "identity:conformance-sender" },
+      { "credential": "a-bearer-the-plugin-ignores", "carriers": { "x-twilio-signature": "g4j77HfpeVqAY454YjxDNdsK/2U=" }, "verdict": "identity:conformance-sender" },
+      { "credential": null, "carriers": { "x-twilio-signature": "of8PlLK1dnG9YtHVMrNG91lKU60=" }, "verdict": "reject" },
+      { "credential": null, "carriers": { "x-twilio-signature": "not base64!" }, "verdict": "reject" },
+      { "credential": null, "carriers": { "x-twilio-signature": "" }, "verdict": "reject" },
+      { "credential": null, "carriers": {}, "verdict": "pass" },
+      { "credential": "a-bearer-the-plugin-ignores", "carriers": {}, "verdict": "pass" },
+      { "credential": null, "carriers": { "webhook-id": "msg_1" }, "verdict": "pass" }
+    ],
+    "never_echoed": ["conformance-twilio-auth-token"]
+  }
+}

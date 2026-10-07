@@ -1,23 +1,29 @@
 # SPDX-License-Identifier: Apache-2.0
 [package]
 name = "busbar-auth-webhook-signature"
-version = "0.1.0"
+version = "1.6.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "The webhook-signature auth: the logic a busbar build links (its door), and nothing else."
+description = "The webhook-signature auth mechanism: an inbound request authenticated by an HMAC over its URL (and, per variant, its parameters) keyed by a shared secret, as one auth-kind plugin on the auth kind's memory ABI. Variant `twilio`: X-Twilio-Signature."
+
+# MOVED from busbar (crates/busbar-auth-webhook-signature at busbar 4bc63ac1a6, history imported;
+# BUSBAR-1.6.0.md §9: every plugin lives in its own repo). The source is busbar's verbatim.
 
 [lib]
-# rlib: the LINKED door, which a busbar build names as a compiled-in row. The dropped-in door is the
-# sibling `busbar-auth-webhook-signature-plugin` cdylib, which exports this same door as its one symbol; this crate exports none.
+# rlib only: the LINKED door (`busbar_auth_webhook_signature::door`) and the tests. The DROPPED door
+# is the sibling `busbar-auth-webhook-signature-plugin` cdylib, the same door behind the one exported
+# symbol, so this crate's own source stays `forbid(unsafe_code)` (SDK-SAFE).
 crate-type = ["rlib"]
 
-# DEPENDENCY POLICY. A plugin's busbar closure is busbar-contract and nothing else; third-party crates
-# come from the workspace table (`{ workspace = true }`), which is busbar's dependency policy. No
-# plugin opens its own socket, dials, binds or does TLS: a connection is a declared need the kernel
-# serves through the connector.
+# DEPENDENCY POLICY. A plugin's closure is `busbar-contract` plus the third-party crates it needs to
+# do its job (owner ruling 2026-09-28, PLUGIN LIBRARIES): JSON settings, `ring`'s HMAC (SHA-1 for
+# `twilio`, SHA-256 for `standard-webhooks`) and SHA-256, and base64. Every version is the
+# workspace table's (busbar's at the pin).
 [dependencies]
 busbar-contract = { workspace = true }
-# The settings document.
+base64 = { workspace = true }
+ring = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
