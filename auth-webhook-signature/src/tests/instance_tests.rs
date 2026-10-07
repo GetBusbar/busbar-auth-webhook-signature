@@ -353,3 +353,33 @@ fn the_signing_secret_is_never_formatted() {
     assert!(!shown.contains("twilio-auth-token"), "{shown}");
     assert!(!shown.contains("MfKQ9r8G"), "{shown}");
 }
+
+/// The type a value is held as.
+fn held_as<T>(_: &T) -> &'static str {
+    std::any::type_name::<T>()
+}
+
+/// RED (BUSBAR-1.6.0.md THE DESIGN §6, the per-request auth call: "auth material is zeroised"):
+/// the signing key an instance holds for its life — a Twilio auth token as given, a Standard
+/// Webhooks secret decoded — is held in a buffer wiped on drop, never a plain vector.
+#[test]
+fn the_signing_key_is_held_wiped_on_drop() {
+    let twilio = WebhookSignature::new(TWILIO, &[TOKEN]).expect("opens");
+    assert!(
+        held_as(&twilio.key).contains("Zeroizing"),
+        "{}",
+        held_as(&twilio.key)
+    );
+    let sw = WebhookSignature::new(SW, &[SW_SECRET]).expect("opens");
+    assert!(
+        held_as(&sw.key).contains("Zeroizing"),
+        "{}",
+        held_as(&sw.key)
+    );
+    let decoded = signature::standard_webhooks_key(SW_SECRET).expect("decodes");
+    assert!(
+        held_as(&decoded).contains("Zeroizing"),
+        "{}",
+        held_as(&decoded)
+    );
+}
