@@ -389,5 +389,8 @@ fn the_signing_key_is_held_wiped_on_drop() {
 /// door the dropped-in image exports, never a second one.
 #[test]
 fn the_compiled_in_entry_is_the_door_the_dropped_in_image_exports() {
-    assert_eq!(compiled_in::door::door as usize, door as usize);
+    assert!(std::ptr::eq(
+        compiled_in::door::door as *const (),
+        door as *const ()
+    ));
 }
