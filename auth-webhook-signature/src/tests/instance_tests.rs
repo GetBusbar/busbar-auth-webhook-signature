@@ -383,3 +383,14 @@ fn the_signing_key_is_held_wiped_on_drop() {
         held_as(&decoded)
     );
 }
+
+/// RED (THE DESIGN §11.4, compiled-in = dropped-in): a composition root's `auths` row links this
+/// plugin at `compiled_in::door::door`, as it links every sibling auth plugin. That path is the very
+/// door the dropped-in image exports, never a second one.
+#[test]
+fn the_compiled_in_entry_is_the_door_the_dropped_in_image_exports() {
+    assert!(std::ptr::eq(
+        compiled_in::door::door as *const (),
+        door as *const ()
+    ));
+}
