@@ -23,7 +23,9 @@
 //! secret, arrives through the secret kind as the Statement's `signing-secret` reference and is
 //! never logged or echoed. Its inbound point is `HeadBody` (THE DESIGN, "Auth points and guest
 //! lists"): the host lends the whole body, bounded by the size gate, so a signature over the body is
-//! checked over the bytes received; a request the host lent no body is refused (fail-closed).
+//! checked over the bytes received; a request whose signature covers a body (every Standard
+//! Webhooks message and every Twilio non-GET) is refused when the host lent no body (fail-closed);
+//! a Twilio GET signs the URL alone.
 //! Whatever its verdict, it names its signature header lines for the transport to strip, so the
 //! request's handler never sees them.
 //!
