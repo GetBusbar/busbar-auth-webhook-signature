@@ -48,6 +48,7 @@ fn s(b: &str) -> AbiStr {
     AbiStr {
         ptr: b.as_ptr(),
         len: b.len(),
+        ..AbiStr::ZERO
     }
 }
 
@@ -57,6 +58,7 @@ fn blob(b: &[u8], fmt: u32, flags: u32) -> Blob {
         len: b.len(),
         fmt,
         flags,
+        ..Blob::ZERO
     }
 }
 
@@ -144,10 +146,21 @@ fn verify_answer(
     headers: &[(&str, &str)],
 ) -> (String, u32, Vec<String>) {
     let mut buf = vec![0u8; 256];
-    let mut groups = vec![Span { offset: 0, len: 0 }; 4];
+    let mut groups = vec![
+        Span {
+            offset: 0,
+            len: 0,
+            ..Span::ZERO
+        };
+        4
+    ];
     let mut strips = vec![
         StripName {
-            name: Span { offset: 0, len: 0 },
+            name: Span {
+                offset: 0,
+                len: 0,
+                ..Span::ZERO
+            },
             place: 0,
             _reserved: 0,
         };
@@ -178,6 +191,7 @@ fn verify_answer(
             AbiStr {
                 ptr: std::ptr::null(),
                 len: 0,
+                ..AbiStr::ZERO
             },
             s,
         ),
