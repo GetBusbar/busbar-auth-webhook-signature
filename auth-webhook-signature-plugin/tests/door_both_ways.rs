@@ -24,12 +24,12 @@ use busbar_contract::abi::mechanism::call::Span;
 use busbar_contract::abi::mechanism::call::{
     AbiStr, Blob, Outcome, BLOB_JSON, BLOB_OCTETS, BLOB_SECRET,
 };
-use busbar_contract::abi::mechanism::door::DoorFn;
 use busbar_contract::abi::mechanism::lifecycle::{slot as life, OpenIn, OpenOut};
 use busbar_plugin_loader::dispatch::kinds::auth::Auth;
 use busbar_plugin_loader::dispatch::{
-    in_head, load_dropped, load_linked, out_head, rendering_of, Bind, Diagnostic, DispatchConfig,
-    Dispatcher, Dropped, EnvelopeSink, Frame, LinkedRow, Metric, Plugin,
+    in_head, load_dropped, load_linked, out_head, rendering_of_loaded, Bind, Diagnostic,
+    DispatchConfig, Dispatcher, Dropped, EnvelopeSink, Frame, LinkedRow, LoadedDoor, Metric,
+    Plugin,
 };
 
 const TOKEN: &str = "twilio-auth-token";
@@ -44,19 +44,13 @@ fn z<T>() -> T {
 }
 
 fn s(b: &str) -> AbiStr {
-    AbiStr {
-        ptr: b.as_ptr(),
-        len: b.len(),
-    }
+    // SAFETY: `b` outlives the call that reads this view (a test-owned buffer).
+    unsafe { AbiStr::from_raw_parts(b.as_ptr(), b.len()) }
 }
 
 fn blob(b: &[u8], fmt: u32, flags: u32) -> Blob {
-    Blob {
-        ptr: b.as_ptr(),
-        len: b.len(),
-        fmt,
-        flags,
-    }
+    // SAFETY: `b` outlives the call that reads this view (a test-owned buffer).
+    unsafe { Blob::from_raw_parts(b.as_ptr(), b.len(), fmt, flags) }
 }
 
 #[derive(Default)]
@@ -84,14 +78,21 @@ fn bind(folds: &Arc<Folds>, d: &Dispatcher) -> Bind {
     }
 }
 
-/// The compiled-in row `door` states: its Statement rendering and the door.
-fn row(door: DoorFn) -> LinkedRow {
-    LinkedRow::of(door).expect("the door states its Statement")
+/// This crate's own bare `door`, as the loader takes a door it did not read from a library.
+#[allow(unused_unsafe)]
+fn real_loaded() -> LoadedDoor {
+    // SAFETY: `door` is this crate's own `auth_verify_door!` entry: it answers the `'static`,
+    // fully initialised door the SDK laid out.
+    unsafe { LoadedDoor::from_raw(busbar_auth_webhook_signature::door) }
+}
+
+/// The compiled-in row this crate's door states: its Statement rendering and the door.
+fn real_row() -> LinkedRow {
+    LinkedRow::of_loaded(real_loaded()).expect("the door states its Statement")
 }
 
 fn linked(folds: &Arc<Folds>, d: &Dispatcher) -> Plugin<Auth> {
-    load_linked::<Auth>(&row(busbar_auth_webhook_signature::door), bind(folds, d))
-        .expect("the linked door loads")
+    load_linked::<Auth>(&real_row(), bind(folds, d)).expect("the linked door loads")
 }
 
 /// The dropped-in image `cargo test` builds: this crate's cdylib (busbar's suite finds it beside
@@ -99,8 +100,7 @@ fn linked(folds: &Arc<Folds>, d: &Dispatcher) -> Plugin<Auth> {
 /// skip.
 fn dropped(folds: &Arc<Folds>, d: &Dispatcher) -> Option<Plugin<Auth>> {
     let path = busbar_plugin_loader::conformance::cdylib_of("busbar_auth_webhook_signature_plugin");
-    let stated =
-        rendering_of(busbar_auth_webhook_signature::door).expect("the door renders its Statement");
+    let stated = rendering_of_loaded(real_loaded()).expect("the door renders its Statement");
     Some(load_dropped::<Auth>(&path, &stated, bind(folds, d)).expect("the dropped door loads"))
 }
 
@@ -173,13 +173,7 @@ fn verify_answer(
         method: s(method),
         authority: s("edge.example.com"),
         canonical_path: s(path),
-        query: query.map_or(
-            AbiStr {
-                ptr: std::ptr::null(),
-                len: 0,
-            },
-            s,
-        ),
+        query: query.map_or(AbiStr::ABSENT, s),
         timestamp: now,
     };
     f.input.out_buf = IdentityBuf {
@@ -472,8 +466,7 @@ fn twilio_sign(secret: &[u8], url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> Stri
 /// The door's Statement carries the whole `declares` document under `EXT_DECLARES`.
 #[test]
 fn the_statement_carries_the_declares_document() {
-    let row =
-        busbar_plugin_loader::dispatch::LinkedRow::of(busbar_auth_webhook_signature::door).unwrap();
+    let row = LinkedRow::of_loaded(real_loaded()).unwrap();
     let read = busbar_contract::abi::mechanism::rendering::read(&row.statement).unwrap();
     assert_eq!(
         busbar_contract::abi::mechanism::extensions::declares(&read.extensions.bytes),
