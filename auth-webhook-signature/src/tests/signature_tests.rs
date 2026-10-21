@@ -278,3 +278,53 @@ fn a_secret_that_is_not_base64_has_no_key() {
     assert_eq!(standard_webhooks_key(b"whsec_%%%"), None);
     assert_eq!(standard_webhooks_key(b"whsec_"), None);
 }
+
+#[test]
+fn the_standard_webhooks_mac_fed_in_pieces_is_the_one_shot_mac_over_the_joined_message() {
+    let key = hmac::Key::new(hmac::HMAC_SHA256, &sw_key());
+    let joined = [SW_ID, b".", SW_TS, b".", SW_BODY].concat();
+    let one_shot = hmac::sign(&key, &joined);
+    let pieces = standard_webhooks_tag(&key, SW_ID, SW_TS, SW_BODY);
+    assert_eq!(pieces.as_ref(), one_shot.as_ref(), "byte-identical tag");
+    assert_eq!(
+        format!("v1,{}", STANDARD.encode(pieces.as_ref())).as_bytes(),
+        SW_PUBLISHED,
+        "the published vector"
+    );
+    // A body many times the size of the rest still signs as the joined message does.
+    let big = vec![b'x'; 1 << 20];
+    let joined = [SW_ID, b".", SW_TS, b".", &big[..]].concat();
+    assert_eq!(
+        standard_webhooks_tag(&key, SW_ID, SW_TS, &big).as_ref(),
+        hmac::sign(&key, &joined).as_ref()
+    );
+}
+
+/// The crate forbids `unsafe`, so it holds no counting allocator; the proof is the shape. The MAC
+/// takes the body as a borrowed slice and returns ring's fixed-size `Tag` (no heap), and the
+/// verifier's only per-message MAC input is that function: no owned message buffer exists between
+/// the lent body and the HMAC for the body to be copied into.
+#[test]
+fn red_the_standard_webhooks_mac_borrows_the_body_and_owns_no_message_buffer() {
+    let shape: fn(&hmac::Key, &[u8], &[u8], &[u8]) -> hmac::Tag = standard_webhooks_tag;
+    let key = hmac::Key::new(hmac::HMAC_SHA256, &sw_key());
+    assert_eq!(
+        shape(&key, SW_ID, SW_TS, SW_BODY).as_ref().len(),
+        hmac::HMAC_SHA256.digest_algorithm().output_len()
+    );
+}
+
+#[test]
+fn tags_compare_equal_only_byte_for_byte_and_length_for_length() {
+    let tag = [7u8; 32];
+    assert!(tags_equal(&tag, &tag));
+    let mut flipped = tag;
+    flipped[31] ^= 1;
+    assert!(!tags_equal(&tag, &flipped));
+    assert!(!tags_equal(&tag, &tag[..31]), "a prefix");
+    assert!(
+        !tags_equal(&tag, &[&tag[..], &[0u8][..]].concat()),
+        "an extension"
+    );
+    assert!(!tags_equal(&tag, &[]), "empty");
+}

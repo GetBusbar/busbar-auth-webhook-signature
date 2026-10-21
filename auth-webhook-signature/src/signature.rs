@@ -3,7 +3,8 @@
 
 //! THE SIGNATURES THEMSELVES, as pure functions: what each variant signs, and the constant-time
 //! check of a presented signature against it. No ABI, no settings, no I/O. The HMACs are `ring`'s;
-//! every comparison of a MAC is `ring::hmac::verify` (constant-time).
+//! every comparison of a MAC is constant-time (`ring::hmac::verify`, or [`tags_equal`] where the
+//! MAC is computed in pieces).
 //!
 //! * `twilio` (Twilio's published request-validation algorithm): HMAC-SHA1, keyed by the account's
 //!   auth token, over the full URL Twilio requested followed by every POST form parameter as `name`
@@ -156,14 +157,34 @@ pub fn standard_webhooks_key(secret: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
         .filter(|k| !k.is_empty())
 }
 
-fn standard_webhooks_signed(id: &[u8], timestamp: &[u8], body: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(id.len() + timestamp.len() + body.len() + 2);
-    out.extend_from_slice(id);
-    out.push(b'.');
-    out.extend_from_slice(timestamp);
-    out.push(b'.');
-    out.extend_from_slice(body);
-    out
+/// The Standard Webhooks HMAC-SHA256 tag over `{id}.{timestamp}.{body}` under `key`. The three
+/// parts and their separators are fed to the MAC in pieces, so the body is read where it lies and
+/// never copied into a message buffer (THE DESIGN §11.2: no allocation on the hot path).
+#[must_use]
+pub fn standard_webhooks_tag(
+    key: &hmac::Key,
+    id: &[u8],
+    timestamp: &[u8],
+    body: &[u8],
+) -> hmac::Tag {
+    let mut mac = hmac::Context::with_key(key);
+    mac.update(id);
+    mac.update(b".");
+    mac.update(timestamp);
+    mac.update(b".");
+    mac.update(body);
+    mac.sign()
+}
+
+/// Whether two MACs are equal, in time that depends only on their lengths (a MAC's length is
+/// public: it is the algorithm's).
+#[must_use]
+pub fn tags_equal(computed: &[u8], presented: &[u8]) -> bool {
+    let diff = computed
+        .iter()
+        .zip(presented)
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b));
+    computed.len() == presented.len() && std::hint::black_box(diff) == 0
 }
 
 /// The `v1,<base64>` signature of one message under `key` (the decoded secret).
@@ -171,7 +192,7 @@ fn standard_webhooks_signed(id: &[u8], timestamp: &[u8], body: &[u8]) -> Vec<u8>
 #[must_use]
 pub fn standard_webhooks_sign(key: &[u8], id: &[u8], timestamp: &[u8], body: &[u8]) -> String {
     let key = hmac::Key::new(hmac::HMAC_SHA256, key);
-    let tag = hmac::sign(&key, &standard_webhooks_signed(id, timestamp, body));
+    let tag = standard_webhooks_tag(&key, id, timestamp, body);
     format!("v1,{}", STANDARD.encode(tag.as_ref()))
 }
 
@@ -210,12 +231,12 @@ pub fn standard_webhooks_verify(
         return Err(StandardWebhooksRefusal::Stale);
     }
     let key = hmac::Key::new(hmac::HMAC_SHA256, key);
-    let signed = standard_webhooks_signed(id, timestamp.trim_ascii(), body);
+    let computed = standard_webhooks_tag(&key, id, timestamp.trim_ascii(), body);
     let matched = signatures
         .split(|b| *b == b' ')
         .filter_map(|entry| entry.strip_prefix(b"v1,"))
         .filter_map(|b64| STANDARD.decode(b64).ok())
-        .any(|tag| hmac::verify(&key, &signed, &tag).is_ok());
+        .any(|tag| tags_equal(computed.as_ref(), &tag));
     if matched {
         Ok(())
     } else {
