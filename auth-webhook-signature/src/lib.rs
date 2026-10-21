@@ -404,17 +404,13 @@ const SECRET_REFS: &[AbiStr] = &[abi_str(SECRET_REF)];
 
 /// THE STATEMENT: the plugin's name, version, one secret reference, its carriers and its auth tail.
 pub const STATEMENT: Statement = with_tail(
-    Statement {
-        secret_refs: SECRET_REFS.as_ptr(),
-        secret_refs_len: SECRET_REFS.len(),
-        mark_words: CARRIERS.as_ptr(),
-        mark_words_len: CARRIERS.len(),
-        ..statement(
-            "busbar-auth-webhook-signature",
-            env!("CARGO_PKG_VERSION"),
-            1024,
-        )
-    },
+    statement(
+        "busbar-auth-webhook-signature",
+        env!("CARGO_PKG_VERSION"),
+        1024,
+    )
+    .with_secret_refs(SECRET_REFS)
+    .with_mark_words(CARRIERS),
     TAIL,
 );
 

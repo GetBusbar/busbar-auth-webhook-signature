@@ -11,7 +11,7 @@
 //! arms kept. `plugin-ci.yml` runs it under `--release`.
 
 busbar_plugin_loader::conformance_suite! {
-    door: busbar_auth_webhook_signature::door,
+    door: busbar_auth_webhook_signature::MACRO_DOOR,
     cdylib: "busbar_auth_webhook_signature_plugin",
     inputs: include_str!("conformance.json"),
 }
