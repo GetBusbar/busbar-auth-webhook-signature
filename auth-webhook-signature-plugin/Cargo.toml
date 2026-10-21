@@ -23,3 +23,6 @@ busbar-contract = { workspace = true }
 # (`tests/door_both_ways.rs`) load the linked door and dlopen the built cdylib over busbar's REAL
 # loader: dev-only, never in the shipped artifact.
 busbar-plugin-loader = { workspace = true, features = ["conformance"] }
+# The door's both-ways proof signs its own `twilio` requests (the logic crate exports only its door).
+base64 = { workspace = true }
+ring = { workspace = true }

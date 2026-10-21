@@ -10,8 +10,18 @@
 //! every step's crossings exactly at the script's pin, the two folds equal, and the suite's RED
 //! arms kept. `plugin-ci.yml` runs it under `--release`.
 
+/// This crate's own bare `door`, as the loader takes a door it did not read from a library.
+#[allow(unused_unsafe)]
+fn real_loaded() -> busbar_plugin_loader::dispatch::LoadedDoor {
+    // SAFETY: `door` is this crate's own `auth_verify_door!` entry: it answers the `'static`,
+    // fully initialised door the SDK laid out.
+    unsafe {
+        busbar_plugin_loader::dispatch::LoadedDoor::from_raw(busbar_auth_webhook_signature::door)
+    }
+}
+
 busbar_plugin_loader::conformance_suite! {
-    door: busbar_auth_webhook_signature::door,
+    loaded: real_loaded(),
     cdylib: "busbar_auth_webhook_signature_plugin",
     inputs: include_str!("conformance.json"),
 }

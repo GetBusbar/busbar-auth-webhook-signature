@@ -46,7 +46,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-pub mod signature;
+mod signature;
 
 use busbar_contract::abi::auth::{AuthPoints, AuthTail};
 use busbar_contract::abi::mechanism::call::AbiStr;
@@ -60,28 +60,28 @@ use busbar_contract::auth_calls::Replay;
 use serde::Deserialize;
 
 /// The scheme alternative a claim names to be authenticated by this plugin.
-pub const SCHEME_ALTERNATIVE: &str = "webhook-signature";
+const SCHEME_ALTERNATIVE: &str = "webhook-signature";
 
 /// The Statement's one secret reference: the shared signing secret (for `twilio`, the account's
 /// auth token; for `standard-webhooks`, the `whsec_` secret), resolved by the secret kind.
-pub const SECRET_REF: &str = "signing-secret";
+const SECRET_REF: &str = "signing-secret";
 
 /// The header a `twilio` signature is presented in (matched ASCII case-insensitively).
-pub const TWILIO_SIGNATURE_HEADER: &str = "x-twilio-signature";
+const TWILIO_SIGNATURE_HEADER: &str = "x-twilio-signature";
 /// The Standard Webhooks message id header.
-pub const WEBHOOK_ID_HEADER: &str = "webhook-id";
+const WEBHOOK_ID_HEADER: &str = "webhook-id";
 /// The Standard Webhooks timestamp header (seconds since the epoch).
-pub const WEBHOOK_TIMESTAMP_HEADER: &str = "webhook-timestamp";
+const WEBHOOK_TIMESTAMP_HEADER: &str = "webhook-timestamp";
 /// The Standard Webhooks signature-list header.
-pub const WEBHOOK_SIGNATURE_HEADER: &str = "webhook-signature";
+const WEBHOOK_SIGNATURE_HEADER: &str = "webhook-signature";
 
 /// The Standard Webhooks default tolerance, either direction: five minutes.
-pub const DEFAULT_TOLERANCE_SECS: u64 = 300;
+const DEFAULT_TOLERANCE_SECS: u64 = 300;
 
 /// Which sender's algorithm a configured instance checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum Variant {
+enum Variant {
     /// Twilio: HMAC-SHA1 over the full URL plus the sorted POST form parameters, base64, in
     /// `X-Twilio-Signature`.
     Twilio,
@@ -101,7 +101,7 @@ impl Variant {
 /// The settings document, one JSON object.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Settings {
+struct Settings {
     /// The sender's algorithm.
     pub variant: Variant,
     /// `twilio` only, and required there: the scheme and authority the SENDER requested — exactly
@@ -179,7 +179,7 @@ fn origin_is_scheme_and_authority(origin: &str) -> bool {
 
 /// One request, as much of it as a signature reads.
 #[derive(Clone, Copy)]
-pub struct Request<'a> {
+struct Request<'a> {
     /// The method.
     pub method: &'a [u8],
     /// The path, raw as received.
@@ -211,7 +211,7 @@ impl<'a> Request<'a> {
 }
 
 /// One configured instance: its settings and its signing key.
-pub struct WebhookSignature {
+struct WebhookSignature {
     settings: Settings,
     /// The HMAC key: the token as given (`twilio`), or the decoded secret (`standard-webhooks`),
     /// wiped on drop (THE DESIGN §6: "auth material is zeroised").
@@ -338,22 +338,19 @@ impl WebhookSignature {
         }
     }
 
-    /// The URL the sender requested: the configured origin, the received path, and `?query` when
-    /// the request had one.
-    fn twilio_url(&self, path: &[u8], query: Option<&[u8]>) -> Vec<u8> {
-        let mut url = self
+    /// The URL the sender requested, as its pieces: the configured origin, the received path, and
+    /// `?query` when the request had one. Borrowed, so the MAC reads each where it lies.
+    fn twilio_url<'a>(&'a self, path: &'a [u8], query: Option<&'a [u8]>) -> [&'a [u8]; 4] {
+        let origin = self
             .settings
             .origin
             .as_deref()
             .unwrap_or_default()
-            .as_bytes()
-            .to_vec();
-        url.extend_from_slice(path);
-        if let Some(q) = query {
-            url.push(b'?');
-            url.extend_from_slice(q);
+            .as_bytes();
+        match query {
+            Some(q) => [origin, path, b"?", q],
+            None => [origin, path, b"", b""],
         }
-        url
     }
 }
 
@@ -402,33 +399,36 @@ const TAIL: &AuthTail = &verify_tail(0, AuthPoints::HEAD_BODY);
 
 const SECRET_REFS: &[AbiStr] = &[abi_str(SECRET_REF)];
 
+busbar_contract::statement_extensions!(
+    /// The Statement's extensions: this plugin's whole `declares` document (BUSBAR-1.6.0.md l.246).
+    EXTENSIONS: [(
+        busbar_contract::abi::mechanism::extensions::EXT_DECLARES,
+        include_bytes!("../declares.json")
+    )]
+);
+
 /// THE STATEMENT: the plugin's name, version, one secret reference, its carriers and its auth tail.
-pub const STATEMENT: Statement = with_tail(
-    Statement {
-        secret_refs: SECRET_REFS.as_ptr(),
-        secret_refs_len: SECRET_REFS.len(),
-        mark_words: CARRIERS.as_ptr(),
-        mark_words_len: CARRIERS.len(),
-        ..statement(
+const STATEMENT: Statement = with_tail(
+    {
+        let mut s = statement(
             "busbar-auth-webhook-signature",
             env!("CARGO_PKG_VERSION"),
             1024,
         )
+        .with_secret_refs(SECRET_REFS)
+        .with_mark_words(CARRIERS);
+        s.extensions = EXTENSIONS;
+        s
     },
     TAIL,
 );
 
-busbar_contract::auth_verify_door!(WebhookSignature, STATEMENT);
-
-/// THE COMPILED-IN ENTRY a composition root's `auths` row names: the door at
-/// `compiled_in::door::door`, the same [`door`] the dropped-in build exports (compiled-in =
-/// dropped-in), as every sibling auth plugin states it.
-pub mod compiled_in {
-    /// The door and its `MACRO_DOOR` (the `plugin_door!` door a linked table names).
-    pub mod door {
-        pub use crate::{door, MACRO_DOOR};
-    }
+mod door {
+    busbar_contract::auth_verify_door!(super::WebhookSignature, super::STATEMENT);
 }
+
+/// THE DOOR: this plugin's one public item (BUSBAR-1.6.0.md l.3567, Crate shape).
+pub use door::door;
 
 #[cfg(test)]
 #[path = "tests/instance_tests.rs"]

@@ -11,8 +11,9 @@ fn owned(params: &[(&str, &str)]) -> Vec<(Vec<u8>, Vec<u8>)> {
 
 // ── twilio ──────────────────────────────────────────────────────────────────────────────────────
 
-/// Twilio's published request-validation example (its docs and every official helper library's
-/// tests): auth token `12345`, this URL, these POST parameters.
+/// Twilio's published request-validation example (its webhook security docs,
+/// <https://www.twilio.com/docs/usage/security#validating-requests>, and every official helper
+/// library's tests): auth token `12345`, this URL, these POST parameters.
 const TOKEN: &[u8] = b"12345";
 const URL: &[u8] = b"https://mycompany.com/myapp.php?foo=1&bar=2";
 const PARAMS: &[(&str, &str)] = &[
@@ -31,7 +32,38 @@ fn twilios_published_test_vector_signs_and_verifies() {
         twilio_sign(TOKEN, URL, &owned(PARAMS)).as_bytes(),
         PUBLISHED
     );
-    assert!(twilio_verify(TOKEN, URL, &owned(PARAMS), PUBLISHED));
+    assert!(twilio_verify(TOKEN, &[URL], &owned(PARAMS), PUBLISHED));
+}
+
+/// Twilio's published vector with the URL fed as the verifier feeds it, in its pieces (origin,
+/// path, `?`, query), and each sorted parameter borrowed: the tag is byte-identical to the one-shot
+/// MAC over the joined signed string, and is the published signature.
+#[test]
+fn twilios_published_vector_verifies_with_the_url_and_params_fed_in_pieces() {
+    let pieces: [&[u8]; 4] = [
+        b"https://mycompany.com",
+        b"/myapp.php",
+        b"?",
+        b"foo=1&bar=2",
+    ];
+    assert_eq!(pieces.concat(), URL);
+    let key = twilio_key(TOKEN);
+    let params = owned(PARAMS);
+    let fed = twilio_tag(&key, &pieces, &params);
+    let one_shot = hmac::sign(&key, &twilio_signed_string(URL, &params));
+    assert_eq!(fed.as_ref(), one_shot.as_ref(), "byte-identical tag");
+    assert_eq!(STANDARD.encode(fed.as_ref()).as_bytes(), PUBLISHED);
+    assert!(twilio_verify(TOKEN, &pieces, &params, PUBLISHED));
+    // A request without a query: the verifier's empty `?` and query pieces add nothing.
+    let bare: [&[u8]; 4] = [b"https://mycompany.com", b"/myapp.php", b"", b""];
+    assert_eq!(
+        twilio_tag(&key, &bare, &params).as_ref(),
+        hmac::sign(
+            &key,
+            &twilio_signed_string(b"https://mycompany.com/myapp.php", &params)
+        )
+        .as_ref()
+    );
 }
 
 #[test]
@@ -39,7 +71,7 @@ fn the_published_vector_verifies_from_its_form_body_in_any_order() {
     // The same parameters as the form body Twilio POSTs, percent-encoded, in another order.
     let body = b"To=%2B18005551212&From=%2B12349013030&Digits=1234&Caller=%2B12349013030&CallSid=CA1234567890ABCDE";
     let params = form_params(body).expect("a form body");
-    assert!(twilio_verify(TOKEN, URL, &params, PUBLISHED));
+    assert!(twilio_verify(TOKEN, &[URL], &params, PUBLISHED));
 }
 
 /// A repeated identical pair is signed once, and a name's distinct values are signed sorted — the
@@ -93,15 +125,15 @@ fn red_a_bad_twilio_signature_is_refused() {
     // One changed character of the published signature.
     assert!(!twilio_verify(
         TOKEN,
-        URL,
+        &[URL],
         &params,
         b"1/KCTR6DLpKmkAf8muzZqo1nDgQ="
     ));
     // The right signature under the wrong token.
-    assert!(!twilio_verify(b"54321", URL, &params, PUBLISHED));
+    assert!(!twilio_verify(b"54321", &[URL], &params, PUBLISHED));
     // Not base64 at all, and empty.
-    assert!(!twilio_verify(TOKEN, URL, &params, b"not base64!"));
-    assert!(!twilio_verify(TOKEN, URL, &params, b""));
+    assert!(!twilio_verify(TOKEN, &[URL], &params, b"not base64!"));
+    assert!(!twilio_verify(TOKEN, &[URL], &params, b""));
 }
 
 #[test]
@@ -114,15 +146,15 @@ fn red_a_twilio_signature_replayed_on_another_url_is_refused() {
         b"https://evil.example/myapp.php?foo=1&bar=2",
     ] {
         assert!(
-            !twilio_verify(TOKEN, other, &params, PUBLISHED),
+            !twilio_verify(TOKEN, &[other], &params, PUBLISHED),
             "{other:?}"
         );
     }
     // And with a parameter changed or dropped.
     let mut tampered = params.clone();
     tampered[2].1 = b"9999".to_vec();
-    assert!(!twilio_verify(TOKEN, URL, &tampered, PUBLISHED));
-    assert!(!twilio_verify(TOKEN, URL, &params[1..], PUBLISHED));
+    assert!(!twilio_verify(TOKEN, &[URL], &tampered, PUBLISHED));
+    assert!(!twilio_verify(TOKEN, &[URL], &params[1..], PUBLISHED));
 }
 
 // ── standard-webhooks ───────────────────────────────────────────────────────────────────────────
@@ -277,4 +309,42 @@ fn red_a_stale_or_future_timestamp_is_refused_even_with_a_valid_signature() {
 fn a_secret_that_is_not_base64_has_no_key() {
     assert_eq!(standard_webhooks_key(b"whsec_%%%"), None);
     assert_eq!(standard_webhooks_key(b"whsec_"), None);
+}
+
+#[test]
+fn the_standard_webhooks_mac_fed_in_pieces_is_the_one_shot_mac_over_the_joined_message() {
+    let key = hmac::Key::new(hmac::HMAC_SHA256, &sw_key());
+    let joined = [SW_ID, b".", SW_TS, b".", SW_BODY].concat();
+    let one_shot = hmac::sign(&key, &joined);
+    let pieces = standard_webhooks_tag(&key, SW_ID, SW_TS, SW_BODY);
+    assert_eq!(pieces.as_ref(), one_shot.as_ref(), "byte-identical tag");
+    assert_eq!(
+        format!("v1,{}", STANDARD.encode(pieces.as_ref())).as_bytes(),
+        SW_PUBLISHED,
+        "the published vector"
+    );
+    // A body many times the size of the rest still signs as the joined message does.
+    let big = vec![b'x'; 1 << 20];
+    let joined = [SW_ID, b".", SW_TS, b".", &big[..]].concat();
+    assert_eq!(
+        standard_webhooks_tag(&key, SW_ID, SW_TS, &big).as_ref(),
+        hmac::sign(&key, &joined).as_ref()
+    );
+}
+
+/// The MAC comparison, behaviourally: equal tags are equal; tags of the same length that differ in
+/// any byte are not; a prefix, an extension and the empty tag (a different length) are not.
+#[test]
+fn tags_compare_equal_only_byte_for_byte_and_length_for_length() {
+    let tag = [7u8; 32];
+    assert!(tags_equal(&tag, &tag));
+    let mut flipped = tag;
+    flipped[31] ^= 1;
+    assert!(!tags_equal(&tag, &flipped));
+    assert!(!tags_equal(&tag, &tag[..31]), "a prefix");
+    assert!(
+        !tags_equal(&tag, &[&tag[..], &[0u8][..]].concat()),
+        "an extension"
+    );
+    assert!(!tags_equal(&tag, &[]), "empty");
 }
