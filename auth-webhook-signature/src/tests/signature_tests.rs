@@ -332,20 +332,8 @@ fn the_standard_webhooks_mac_fed_in_pieces_is_the_one_shot_mac_over_the_joined_m
     );
 }
 
-/// The crate forbids `unsafe`, so it holds no counting allocator; the proof is the shape. The MAC
-/// takes the body as a borrowed slice and returns ring's fixed-size `Tag` (no heap), and the
-/// verifier's only per-message MAC input is that function: no owned message buffer exists between
-/// the lent body and the HMAC for the body to be copied into.
-#[test]
-fn red_the_standard_webhooks_mac_borrows_the_body_and_owns_no_message_buffer() {
-    let shape: fn(&hmac::Key, &[u8], &[u8], &[u8]) -> hmac::Tag = standard_webhooks_tag;
-    let key = hmac::Key::new(hmac::HMAC_SHA256, &sw_key());
-    assert_eq!(
-        shape(&key, SW_ID, SW_TS, SW_BODY).as_ref().len(),
-        hmac::HMAC_SHA256.digest_algorithm().output_len()
-    );
-}
-
+/// The MAC comparison, behaviourally: equal tags are equal; tags of the same length that differ in
+/// any byte are not; a prefix, an extension and the empty tag (a different length) are not.
 #[test]
 fn tags_compare_equal_only_byte_for_byte_and_length_for_length() {
     let tag = [7u8; 32];

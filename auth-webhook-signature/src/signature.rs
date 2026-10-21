@@ -196,10 +196,10 @@ pub fn standard_webhooks_tag(
 }
 
 /// Whether two MACs are equal, in time that depends only on their lengths (a MAC's length is
-/// public: it is the algorithm's): `ring`'s constant-time comparison.
+/// public: it is the algorithm's): the contract's constant-time comparison.
 #[must_use]
 pub fn tags_equal(computed: &[u8], presented: &[u8]) -> bool {
-    ring::constant_time::verify_slices_are_equal(computed, presented).is_ok()
+    busbar_contract::constant_time_eq(computed, presented)
 }
 
 /// The `v1,<base64>` signature of one message under `key` (the decoded secret).
