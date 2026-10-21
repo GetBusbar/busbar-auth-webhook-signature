@@ -338,22 +338,19 @@ impl WebhookSignature {
         }
     }
 
-    /// The URL the sender requested: the configured origin, the received path, and `?query` when
-    /// the request had one.
-    fn twilio_url(&self, path: &[u8], query: Option<&[u8]>) -> Vec<u8> {
-        let mut url = self
+    /// The URL the sender requested, as its pieces: the configured origin, the received path, and
+    /// `?query` when the request had one. Borrowed, so the MAC reads each where it lies.
+    fn twilio_url<'a>(&'a self, path: &'a [u8], query: Option<&'a [u8]>) -> [&'a [u8]; 4] {
+        let origin = self
             .settings
             .origin
             .as_deref()
             .unwrap_or_default()
-            .as_bytes()
-            .to_vec();
-        url.extend_from_slice(path);
-        if let Some(q) = query {
-            url.push(b'?');
-            url.extend_from_slice(q);
+            .as_bytes();
+        match query {
+            Some(q) => [origin, path, b"?", q],
+            None => [origin, path, b"", b""],
         }
-        url
     }
 }
 

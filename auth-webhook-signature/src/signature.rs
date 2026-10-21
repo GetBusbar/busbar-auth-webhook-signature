@@ -3,8 +3,8 @@
 
 //! THE SIGNATURES THEMSELVES, as pure functions: what each variant signs, and the constant-time
 //! check of a presented signature against it. No ABI, no settings, no I/O. The HMACs are `ring`'s;
-//! every comparison of a MAC is constant-time (`ring::hmac::verify`, or [`tags_equal`] where the
-//! MAC is computed in pieces).
+//! every MAC is computed in pieces (`ring::hmac::Context`) over the signed parts where they lie,
+//! and every comparison of a MAC is constant-time ([`tags_equal`]).
 //!
 //! * `twilio` (Twilio's published request-validation algorithm): HMAC-SHA1, keyed by the account's
 //!   auth token, over the full URL Twilio requested followed by every POST form parameter as `name`
@@ -25,22 +25,29 @@ use zeroize::Zeroizing;
 
 // ── twilio ──────────────────────────────────────────────────────────────────────────────────────
 
-/// The string a `twilio` signature is computed over: `url`, then each parameter's name and value,
-/// as Twilio's reference validators build it — the DISTINCT names sorted, and under each name its
-/// DISTINCT values sorted (a repeated identical `name=value` pair is signed once).
+/// The parameters as Twilio's reference validators sign them, borrowed: the DISTINCT names sorted,
+/// and under each name its DISTINCT values sorted (a repeated identical `name=value` pair is signed
+/// once). Sorting the `(name, value)` pairs and dropping repeats is exactly that order.
+fn twilio_sorted_params(params: &[(Vec<u8>, Vec<u8>)]) -> Vec<(&[u8], &[u8])> {
+    let mut sorted: Vec<(&[u8], &[u8])> = params
+        .iter()
+        .map(|(name, value)| (name.as_slice(), value.as_slice()))
+        .collect();
+    sorted.sort_unstable();
+    sorted.dedup();
+    sorted
+}
+
+/// The string a `twilio` signature is computed over, joined: the URL, then each sorted parameter's
+/// name and value. The verifier never builds it ([`twilio_tag`] feeds the same bytes in pieces); it
+/// is the reference the tests hold the pieces to.
+#[cfg(test)]
 #[must_use]
 pub fn twilio_signed_string(url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
-    let mut by_name: std::collections::BTreeMap<&[u8], std::collections::BTreeSet<&[u8]>> =
-        std::collections::BTreeMap::new();
-    for (name, value) in params {
-        by_name.entry(name).or_default().insert(value);
-    }
     let mut out = url.to_vec();
-    for (name, values) in by_name {
-        for value in values {
-            out.extend_from_slice(name);
-            out.extend_from_slice(value);
-        }
+    for (name, value) in twilio_sorted_params(params) {
+        out.extend_from_slice(name);
+        out.extend_from_slice(value);
     }
     out
 }
@@ -49,32 +56,44 @@ fn twilio_key(secret: &[u8]) -> hmac::Key {
     hmac::Key::new(hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, secret)
 }
 
+/// The `twilio` HMAC-SHA1 tag under `key` over the URL, given as the pieces it is made of (origin,
+/// path, `?`, query), then each sorted parameter's name and value. Every piece is fed to the MAC
+/// where it lies: no signed string is built per request (THE DESIGN §11.2).
+#[must_use]
+pub fn twilio_tag(key: &hmac::Key, url: &[&[u8]], params: &[(Vec<u8>, Vec<u8>)]) -> hmac::Tag {
+    let mut mac = hmac::Context::with_key(key);
+    for piece in url {
+        mac.update(piece);
+    }
+    for (name, value) in twilio_sorted_params(params) {
+        mac.update(name);
+        mac.update(value);
+    }
+    mac.sign()
+}
+
 /// The `twilio` signature of `url` and `params` under `secret`, base64 as Twilio presents it.
 #[cfg(test)]
 #[must_use]
 pub fn twilio_sign(secret: &[u8], url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> String {
-    let tag = hmac::sign(&twilio_key(secret), &twilio_signed_string(url, params));
+    let tag = twilio_tag(&twilio_key(secret), &[url], params);
     STANDARD.encode(tag.as_ref())
 }
 
-/// Whether `presented` (the header value, base64) is the `twilio` signature of `url` and `params`
-/// under `secret`. A value that is not base64 is simply not the signature.
+/// Whether `presented` (the header value, base64) is the `twilio` signature of the URL (its
+/// pieces, in order) and `params` under `secret`. A value that is not base64 is simply not the
+/// signature.
 #[must_use]
 pub fn twilio_verify(
     secret: &[u8],
-    url: &[u8],
+    url: &[&[u8]],
     params: &[(Vec<u8>, Vec<u8>)],
     presented: &[u8],
 ) -> bool {
     let Ok(tag) = STANDARD.decode(presented.trim_ascii()) else {
         return false;
     };
-    hmac::verify(
-        &twilio_key(secret),
-        &twilio_signed_string(url, params),
-        &tag,
-    )
-    .is_ok()
+    tags_equal(twilio_tag(&twilio_key(secret), url, params).as_ref(), &tag)
 }
 
 /// An `application/x-www-form-urlencoded` body as Twilio signs it: each `name=value` pair
