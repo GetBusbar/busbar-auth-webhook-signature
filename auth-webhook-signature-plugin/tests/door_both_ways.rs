@@ -472,8 +472,8 @@ fn twilio_sign(secret: &[u8], url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> Stri
 /// The door's Statement carries the whole `declares` document under `EXT_DECLARES`.
 #[test]
 fn the_statement_carries_the_declares_document() {
-    let row = busbar_plugin_loader::dispatch::LinkedRow::of(busbar_auth_webhook_signature::door)
-        .unwrap();
+    let row =
+        busbar_plugin_loader::dispatch::LinkedRow::of(busbar_auth_webhook_signature::door).unwrap();
     let read = busbar_contract::abi::mechanism::rendering::read(&row.statement).unwrap();
     assert_eq!(
         busbar_contract::abi::mechanism::extensions::declares(&read.extensions.bytes),
