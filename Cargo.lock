@@ -56,17 +56,15 @@ dependencies = [
 name = "busbar-auth-webhook-signature-plugin"
 version = "1.6.0"
 dependencies = [
- "base64",
  "busbar-auth-webhook-signature",
  "busbar-contract",
  "busbar-plugin-loader",
- "ring",
 ]
 
 [[package]]
 name = "busbar-contract"
 version = "1.6.0"
-source = "git+https://github.com/GetBusbar/busbar?rev=1b09a4a79a962112c8ef8036e2df50a7221daf5e#1b09a4a79a962112c8ef8036e2df50a7221daf5e"
+source = "git+https://github.com/GetBusbar/busbar?rev=08d4d7c501ccb9f734a8d088c242addb2e5fb444#08d4d7c501ccb9f734a8d088c242addb2e5fb444"
 dependencies = [
  "async-trait",
  "base64",
@@ -89,7 +87,7 @@ dependencies = [
 [[package]]
 name = "busbar-plugin-loader"
 version = "1.5.0"
-source = "git+https://github.com/GetBusbar/busbar?rev=1b09a4a79a962112c8ef8036e2df50a7221daf5e#1b09a4a79a962112c8ef8036e2df50a7221daf5e"
+source = "git+https://github.com/GetBusbar/busbar?rev=08d4d7c501ccb9f734a8d088c242addb2e5fb444#08d4d7c501ccb9f734a8d088c242addb2e5fb444"
 dependencies = [
  "busbar-contract",
  "ed25519-dalek",
