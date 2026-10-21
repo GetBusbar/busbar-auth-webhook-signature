@@ -15,7 +15,6 @@
 use std::mem::zeroed;
 use std::sync::{Arc, Mutex};
 
-use busbar_auth_webhook_signature::signature::twilio_sign;
 use busbar_contract::abi::auth::{
     slot, IdentifyOut, IdentityBuf, NamedValue, RequestFacts, StripName, VerifyIn,
     DECISION_CONTINUE, DECISION_STOP, POINT_HEAD_BODY, SPAN_ABSENT, STRIP_FIELD, VERDICT_IDENTITY,
@@ -447,4 +446,37 @@ fn every_verdict_names_the_signature_lines_and_a_decision() {
         assert_eq!(got, decision, "{line}");
         assert_eq!(stripped, names, "{line}");
     }
+}
+
+/// The `twilio` signature of `url` and `params` under `secret`, base64 as Twilio presents it: the
+/// distinct names sorted, and under each name its distinct values sorted, appended to the URL, then
+/// HMAC-SHA1. The test signs on its own because the logic crate's only public item is its door.
+fn twilio_sign(secret: &[u8], url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> String {
+    use base64::Engine as _;
+    let mut by_name: std::collections::BTreeMap<&[u8], std::collections::BTreeSet<&[u8]>> =
+        std::collections::BTreeMap::new();
+    for (name, value) in params {
+        by_name.entry(name).or_default().insert(value);
+    }
+    let mut signed = url.to_vec();
+    for (name, values) in by_name {
+        for value in values {
+            signed.extend_from_slice(name);
+            signed.extend_from_slice(value);
+        }
+    }
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, secret);
+    base64::engine::general_purpose::STANDARD.encode(ring::hmac::sign(&key, &signed).as_ref())
+}
+
+/// The door's Statement carries the whole `declares` document under `EXT_DECLARES`.
+#[test]
+fn the_statement_carries_the_declares_document() {
+    let row = busbar_plugin_loader::dispatch::LinkedRow::of(busbar_auth_webhook_signature::door)
+        .unwrap();
+    let read = busbar_contract::abi::mechanism::rendering::read(&row.statement).unwrap();
+    assert_eq!(
+        busbar_contract::abi::mechanism::extensions::declares(&read.extensions.bytes),
+        Some(&include_bytes!("../../auth-webhook-signature/declares.json")[..]),
+    );
 }

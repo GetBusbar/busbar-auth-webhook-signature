@@ -49,6 +49,7 @@ fn twilio_key(secret: &[u8]) -> hmac::Key {
 }
 
 /// The `twilio` signature of `url` and `params` under `secret`, base64 as Twilio presents it.
+#[cfg(test)]
 #[must_use]
 pub fn twilio_sign(secret: &[u8], url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> String {
     let tag = hmac::sign(&twilio_key(secret), &twilio_signed_string(url, params));
@@ -166,6 +167,7 @@ fn standard_webhooks_signed(id: &[u8], timestamp: &[u8], body: &[u8]) -> Vec<u8>
 }
 
 /// The `v1,<base64>` signature of one message under `key` (the decoded secret).
+#[cfg(test)]
 #[must_use]
 pub fn standard_webhooks_sign(key: &[u8], id: &[u8], timestamp: &[u8], body: &[u8]) -> String {
     let key = hmac::Key::new(hmac::HMAC_SHA256, key);
