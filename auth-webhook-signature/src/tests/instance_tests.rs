@@ -177,6 +177,32 @@ fn a_twilio_json_post_is_bound_by_its_body_sha256() {
     assert_eq!(post(br#"{"property": "other"}"#), Verdict::Reject);
 }
 
+/// The bodySHA256 branch binds the body by its digest AND checks the signature over the URL: a
+/// correct digest under a signature from another token, or a garbage one, is refused.
+#[test]
+fn red_a_twilio_json_post_with_a_bad_signature_is_rejected_though_its_digest_matches() {
+    let body: &[u8] = br#"{"property": "value", "boolean": true}"#;
+    let query = "bodySHA256=0a1ff7634d9ab3b95db5c9a2dfe9416e41502b283a80c7cf19632632f96e6620";
+    let url = format!("wss://edge.example.com/twilio/status?{query}");
+    let other_token = signature::twilio_sign(b"not-the-token", url.as_bytes(), &[]);
+    for bad in [other_token.as_bytes(), b"AAAAAAAAAAAAAAAAAAAAAAAAAAA="] {
+        let headers: &[(&str, &[u8])] = &[("x-twilio-signature", bad)];
+        assert_eq!(
+            judge(
+                &twilio(),
+                "POST",
+                "/twilio/status",
+                Some(query),
+                Some(body),
+                0,
+                headers
+            ),
+            Verdict::Reject,
+            "{bad:?}"
+        );
+    }
+}
+
 // ── standard-webhooks ───────────────────────────────────────────────────────────────────────────
 
 const SW: &[u8] = br#"{"variant":"standard-webhooks"}"#;
