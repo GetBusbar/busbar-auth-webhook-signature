@@ -256,6 +256,20 @@ fn distinct_non_utf8_webhook_ids_get_distinct_replay_keys() {
     assert_eq!(ff, "standard-webhooks-raw/6576742dff");
 }
 
+/// A tolerance near `u64::MAX` at `now == 0` saturates the replay window instead of overflowing it.
+#[test]
+fn a_huge_tolerance_saturates_the_replay_ttl() {
+    let wide = WebhookSignature::new(
+        br#"{"variant":"standard-webhooks","tolerance_secs":18446744073709551615}"#,
+        &[SW_SECRET],
+    )
+    .expect("settings");
+    let Verdict::Identity(id) = judge(&wide, "POST", "/x", None, Some(SW_BODY), 0, ALL) else {
+        panic!("the published vector verifies");
+    };
+    assert_eq!(id.replay.map(|r| r.ttl_secs), Some(u64::MAX));
+}
+
 /// A Twilio signature has no nonce or timestamp to key a replay claim on: none is asked.
 #[test]
 fn a_verified_twilio_request_asks_no_replay_claim() {
