@@ -308,7 +308,10 @@ impl WebhookSignature {
             .unwrap_or(DEFAULT_TOLERANCE_SECS);
         signature::standard_webhooks_verify(&self.key, id, ts, body, sig, r.now, tolerance).ok()?;
         let ts: u64 = std::str::from_utf8(ts.trim_ascii()).ok()?.parse().ok()?;
-        let ttl = ts.saturating_add(tolerance).saturating_sub(r.now) + 1;
+        let ttl = ts
+            .saturating_add(tolerance)
+            .saturating_sub(r.now)
+            .saturating_add(1);
         let key = format!("standard-webhooks/{}", String::from_utf8_lossy(id));
         Some(Some(Box::new(Replay { key, ttl_secs: ttl })))
     }
