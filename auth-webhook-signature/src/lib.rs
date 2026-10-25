@@ -210,19 +210,19 @@ impl<'a> Request<'a> {
     }
 }
 
-/// One configured instance: its settings and its signing key.
+/// One configured instance: its settings and its signing key, as the latest `open` or `refresh`
+/// set them. A `refresh` carrying a ROTATED secret (or new settings) swaps them in place, so the new
+/// secret verifies and the old one is refused without a re-open; a request already judging keeps
+/// the pair it started with.
 pub struct WebhookSignature {
-    settings: Settings,
-    /// The HMAC key: the token as given (`twilio`), or the decoded secret (`standard-webhooks`),
-    /// wiped on drop (THE DESIGN §6: "auth material is zeroised").
-    key: zeroize::Zeroizing<Vec<u8>>,
+    current: std::sync::RwLock<std::sync::Arc<Keyed>>,
 }
 
 impl std::fmt::Debug for WebhookSignature {
     // The key is never formatted.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WebhookSignature")
-            .field("settings", &self.settings)
+            .field("settings", &self.current().settings)
             .finish_non_exhaustive()
     }
 }
@@ -235,6 +235,36 @@ impl WebhookSignature {
     /// The settings are not this plugin's, or the signing secret is missing, empty, or (for
     /// `standard-webhooks`) not base64.
     pub fn new(settings: &[u8], secrets: &[&[u8]]) -> Result<Self, &'static str> {
+        Ok(WebhookSignature {
+            current: std::sync::RwLock::new(std::sync::Arc::new(Keyed::new(settings, secrets)?)),
+        })
+    }
+
+    /// The settings and key this instance judges with now.
+    fn current(&self) -> std::sync::Arc<Keyed> {
+        self.current
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Judge one request.
+    #[must_use]
+    pub fn judge(&self, r: &Request<'_>) -> Verdict {
+        self.current().judge(r)
+    }
+}
+
+/// The settings and the signing key one `open` or `refresh` built.
+struct Keyed {
+    settings: Settings,
+    /// The HMAC key: the token as given (`twilio`), or the decoded secret (`standard-webhooks`),
+    /// wiped on drop (THE DESIGN §6: "auth material is zeroised").
+    key: zeroize::Zeroizing<Vec<u8>>,
+}
+
+impl Keyed {
+    fn new(settings: &[u8], secrets: &[&[u8]]) -> Result<Self, &'static str> {
         let settings = Settings::parse(settings)?;
         let [secret] = secrets else {
             return Err("secrets: exactly one, the signing secret");
@@ -248,12 +278,10 @@ impl WebhookSignature {
                 "secrets: a standard-webhooks secret is base64, optionally `whsec_`-prefixed",
             )?,
         };
-        Ok(WebhookSignature { settings, key })
+        Ok(Keyed { settings, key })
     }
 
-    /// Judge one request.
-    #[must_use]
-    pub fn judge(&self, r: &Request<'_>) -> Verdict {
+    fn judge(&self, r: &Request<'_>) -> Verdict {
         // `Some(replay)` = verified; the replay claim the kernel makes after it, if any.
         let verified: Option<Option<Box<Replay>>> = match self.settings.variant {
             Variant::Twilio => {
@@ -375,6 +403,21 @@ impl WebhookSignature {
 impl VerifyPlugin for WebhookSignature {
     fn open(settings: &[u8], secrets: &[&[u8]]) -> Result<Self, &'static str> {
         WebhookSignature::new(settings, secrets)
+    }
+
+    /// A reload: the settings and the re-resolved signing secret `refresh` carries are read as
+    /// `open` reads them, and replace the pair held, so a rotated secret verifies from the next
+    /// request on and the old one is refused. A pair that would not open keeps the pair held (a
+    /// refresh cannot refuse, and a held instance never stops judging). Nothing is cached, so
+    /// nothing is dropped: `0`.
+    fn refresh(&self, settings: &[u8], secrets: &[&[u8]]) -> u64 {
+        if let Ok(keyed) = Keyed::new(settings, secrets) {
+            *self
+                .current
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = std::sync::Arc::new(keyed);
+        }
+        0
     }
 
     fn verify(&self, request: &VerifyView<'_>) -> Answer {

@@ -23,10 +23,10 @@ use busbar_contract::abi::auth::{
 };
 use busbar_contract::abi::mechanism::call::Span;
 use busbar_contract::abi::mechanism::call::{
-    AbiStr, Blob, Outcome, BLOB_JSON, BLOB_OCTETS, BLOB_SECRET,
+    AbiStr, Blob, OutHead, Outcome, BLOB_JSON, BLOB_OCTETS, BLOB_SECRET,
 };
 use busbar_contract::abi::mechanism::door::DoorFn;
-use busbar_contract::abi::mechanism::lifecycle::{slot as life, OpenIn, OpenOut};
+use busbar_contract::abi::mechanism::lifecycle::{slot as life, OpenIn, OpenOut, RefreshIn};
 use busbar_plugin_loader::dispatch::kinds::auth::Auth;
 use busbar_plugin_loader::dispatch::{
     in_head, load_dropped, load_linked, out_head, rendering_of, Bind, Diagnostic, DispatchConfig,
@@ -115,6 +115,19 @@ fn open(p: &Plugin<Auth>, settings: &str, secret: &str) -> Outcome {
     o.input.secrets = secrets.as_ptr();
     o.input.secrets_len = secrets.len();
     p.call(life::OPEN, &mut o).outcome
+}
+
+/// `refresh` to `generation` with `settings` and the re-resolved `secret`, as a reload carries them.
+fn refresh(p: &Plugin<Auth>, settings: &str, secret: &str, generation: u64) -> Outcome {
+    let secrets = [blob(secret.as_bytes(), BLOB_OCTETS, BLOB_SECRET)];
+    let mut f: Frame<RefreshIn, OutHead> = Frame::new(z(), z());
+    f.input.head = in_head();
+    f.out = out_head();
+    f.input.generation = generation;
+    f.input.settings = blob(settings.as_bytes(), BLOB_JSON, 0);
+    f.input.secrets = secrets.as_ptr();
+    f.input.secrets_len = secrets.len();
+    p.call(life::REFRESH, &mut f).outcome
 }
 
 /// One `verify` at `HeadBody`: `outcome verdict subject`, as the loader judged it. The host lends
@@ -447,4 +460,72 @@ fn every_verdict_names_the_signature_lines_and_a_decision() {
         assert_eq!(got, decision, "{line}");
         assert_eq!(stripped, names, "{line}");
     }
+}
+
+/// THE ROTATION SCRIPT (CREDENTIAL-LOCKDOWN P1.5): a `refresh` carrying a ROTATED signing secret is
+/// picked up on the same instance, without a re-open: a signature under the new secret identifies
+/// and one under the old secret is refused. A refresh with the unchanged secret (the admin cache
+/// flush) changes nothing; a refresh whose secret or settings would not open keeps what the
+/// instance holds (a refresh cannot refuse). RED on the SDK's no-op default `refresh`.
+fn rotation_script(p: &Plugin<Auth>) -> Vec<String> {
+    const NEW: &str = "the-rotated-twilio-auth-token";
+    let old_sig = twilio_sign(TOKEN.as_bytes(), SIGNED_URL.as_bytes(), &[]);
+    let new_sig = twilio_sign(NEW.as_bytes(), SIGNED_URL.as_bytes(), &[]);
+    let both = |label: &str| {
+        [
+            format!(
+                "old {label}{}",
+                verify(p, PATH, Some(QUERY), Some(&old_sig))
+            ),
+            format!(
+                "new {label}{}",
+                verify(p, PATH, Some(QUERY), Some(&new_sig))
+            ),
+        ]
+    };
+    let mut out = vec![format!("open {:?}", open(p, SETTINGS, TOKEN))];
+    out.extend(both(""));
+    out.push(format!("flush {:?}", refresh(p, SETTINGS, TOKEN, 2)));
+    out.extend(both("after flush "));
+    out.push(format!("rotate {:?}", refresh(p, SETTINGS, NEW, 3)));
+    out.extend(both("after rotate "));
+    out.push(format!("empty-secret {:?}", refresh(p, SETTINGS, "", 4)));
+    out.extend(both("after empty-secret "));
+    out.push(format!(
+        "foreign-settings {:?}",
+        refresh(p, r#"{"variant":"stripe"}"#, TOKEN, 5)
+    ));
+    out.extend(both("after foreign-settings "));
+    out
+}
+
+const ROTATION_EXPECTED: &[&str] = &[
+    "open Ready",
+    "old Ready identity webhook-signature:twilio",
+    "new Ready reject",
+    "flush Ready",
+    "old after flush Ready identity webhook-signature:twilio",
+    "new after flush Ready reject",
+    "rotate Ready",
+    "old after rotate Ready reject",
+    "new after rotate Ready identity webhook-signature:twilio",
+    "empty-secret Ready",
+    "old after empty-secret Ready reject",
+    "new after empty-secret Ready identity webhook-signature:twilio",
+    "foreign-settings Ready",
+    "old after foreign-settings Ready reject",
+    "new after foreign-settings Ready identity webhook-signature:twilio",
+];
+
+#[test]
+fn refresh_picks_up_a_rotated_signing_secret_without_a_reopen() {
+    let d = Dispatcher::new(DispatchConfig::default());
+    let folds = Arc::new(Folds::default());
+    assert_eq!(
+        rotation_script(&linked(&folds, &d)),
+        ROTATION_EXPECTED,
+        "the linked door"
+    );
+    let p = dropped(&folds, &d).expect("the dropped door loads");
+    assert_eq!(rotation_script(&p), ROTATION_EXPECTED, "the dropped door");
 }
