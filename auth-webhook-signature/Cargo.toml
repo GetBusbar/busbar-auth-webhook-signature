@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "The webhook-signature auth mechanism: an inbound request authenticated by an HMAC over its URL (and, per variant, its parameters) keyed by a shared secret, as one auth-kind plugin on the auth kind's memory ABI. Variant `twilio`: X-Twilio-Signature."
+description = "The webhook-signature auth mechanism: an inbound request authenticated by an HMAC keyed by a shared secret, as one auth-kind plugin on the auth kind's memory ABI. Variant `twilio`: X-Twilio-Signature (HMAC-SHA1 over the URL and, per request, its form parameters or bodySHA256); variant `standard-webhooks`: webhook-signature (HMAC-SHA256 over id.timestamp.body)."
 
 # MOVED from busbar (crates/busbar-auth-webhook-signature at busbar 4bc63ac1a6, history imported;
 # BUSBAR-1.6.0.md §9: every plugin lives in its own repo). The source is busbar's verbatim.
