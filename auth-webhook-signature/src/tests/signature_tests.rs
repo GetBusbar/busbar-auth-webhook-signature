@@ -278,3 +278,53 @@ fn a_secret_that_is_not_base64_has_no_key() {
     assert_eq!(standard_webhooks_key(b"whsec_%%%"), None);
     assert_eq!(standard_webhooks_key(b"whsec_"), None);
 }
+
+#[test]
+fn a_valid_v1_entry_after_junk_entries_still_verifies() {
+    let valid_b64 = &SW_PUBLISHED[3..];
+    let wrong = format!("v1,{}", STANDARD.encode([7u8; 32]));
+    let v2 = [&b"v2,"[..], valid_b64].concat();
+    let list = [
+        &b" v1,"[..],
+        b"v1,AAAA",
+        wrong.as_bytes(),
+        &v2,
+        b"v1,!!!not-base64",
+        SW_PUBLISHED,
+    ]
+    .join(&b' ');
+    assert_eq!(
+        standard_webhooks_verify(&sw_key(), SW_ID, SW_TS, SW_BODY, &list, SW_NOW, FIVE_MIN),
+        Ok(())
+    );
+}
+
+#[test]
+fn red_only_junk_entries_are_refused() {
+    let wrong = format!("v1,{}", STANDARD.encode([7u8; 32]));
+    let v2 = [&b"v2,"[..], &SW_PUBLISHED[3..]].concat();
+    let list = [&b" v1,"[..], b"v1,AAAA", wrong.as_bytes(), &v2, b"v1,"].join(&b' ');
+    assert_eq!(
+        standard_webhooks_verify(&sw_key(), SW_ID, SW_TS, SW_BODY, &list, SW_NOW, FIVE_MIN),
+        Err(StandardWebhooksRefusal::BadSignature)
+    );
+}
+
+#[test]
+fn red_the_valid_tag_with_one_byte_flipped_is_refused() {
+    let mut tag = STANDARD.decode(&SW_PUBLISHED[3..]).expect("base64");
+    tag[31] ^= 1;
+    let list = format!("v1,{}", STANDARD.encode(&tag));
+    assert_eq!(
+        standard_webhooks_verify(
+            &sw_key(),
+            SW_ID,
+            SW_TS,
+            SW_BODY,
+            list.as_bytes(),
+            SW_NOW,
+            FIVE_MIN
+        ),
+        Err(StandardWebhooksRefusal::BadSignature)
+    );
+}
