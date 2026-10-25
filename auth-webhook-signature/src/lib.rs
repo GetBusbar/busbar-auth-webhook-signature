@@ -34,7 +34,9 @@
 //!   alternative is this one is then refused, because nothing identified the request.
 //! * a signature that verifies (and, for `standard-webhooks`, a timestamp within the tolerance) —
 //!   IDENTITY ([`Settings::subject`]).
-//! * anything else, including a partial header set — REJECT, fail-closed.
+//! * anything else, including a partial header set — REJECT, fail-closed. The client sees one opaque
+//!   Reject; the plugin log says why at info (`module = "webhook-signature"`: stale or bad timestamp,
+//!   bad signature, partial headers, no body lent, twilio mismatch), never a signature, secret or body.
 //!
 //! REPLAY: a verified `standard-webhooks` identity carries a replay key
 //! (`standard-webhooks/<webhook-id>`) and the rest of its tolerance window as TTL; the kernel claims
@@ -274,7 +276,10 @@ impl WebhookSignature {
                 match (id, ts, sig) {
                     (None, None, None) => return Verdict::Pass,
                     (Some(id), Some(ts), Some(sig)) => self.standard_webhooks(r, id, ts, sig),
-                    _ => None,
+                    _ => {
+                        reject("partial webhook-* headers: all three are required");
+                        None
+                    }
                 }
             }
         };
@@ -301,12 +306,32 @@ impl WebhookSignature {
         sig: &[u8],
     ) -> Option<Option<Box<Replay>>> {
         // No body lent is a body the signature cannot be checked over.
-        let body = r.body?;
+        let Some(body) = r.body else {
+            reject("no body lent, so the signature cannot be checked");
+            return None;
+        };
         let tolerance = self
             .settings
             .tolerance_secs
             .unwrap_or(DEFAULT_TOLERANCE_SECS);
-        signature::standard_webhooks_verify(&self.key, id, ts, body, sig, r.now, tolerance).ok()?;
+        if let Err(refusal) =
+            signature::standard_webhooks_verify(&self.key, id, ts, body, sig, r.now, tolerance)
+        {
+            tracing::info!(
+                module = "webhook-signature",
+                reason = ?refusal,
+                "request rejected: {}",
+                match refusal {
+                    signature::StandardWebhooksRefusal::BadTimestamp =>
+                        "webhook-timestamp is not a count of seconds",
+                    signature::StandardWebhooksRefusal::Stale =>
+                        "webhook-timestamp is outside the tolerance (stale)",
+                    signature::StandardWebhooksRefusal::BadSignature =>
+                        "no v1 entry of webhook-signature matches",
+                }
+            );
+            return None;
+        }
         let ts: u64 = std::str::from_utf8(ts.trim_ascii()).ok()?.parse().ok()?;
         let ttl = ts
             .saturating_add(tolerance)
@@ -331,12 +356,21 @@ impl WebhookSignature {
     /// Twilio: a GET signs the URL; a POST whose URL carries `bodySHA256` signs the URL and binds
     /// the body by that digest; any other POST signs the URL plus its form parameters.
     fn twilio(&self, r: &Request<'_>, presented: &[u8]) -> bool {
+        let ok = self.twilio_judged(r, presented);
+        if !ok {
+            reject("twilio signature mismatch (or the signed body could not be judged)");
+        }
+        ok
+    }
+
+    fn twilio_judged(&self, r: &Request<'_>, presented: &[u8]) -> bool {
         let url = self.twilio_url(r.path, r.query);
         if r.method.eq_ignore_ascii_case(b"GET") {
             return signature::twilio_verify(&self.key, &url, &[], presented);
         }
         // A signed request with a body the host did not lend cannot be judged: fail closed.
         let Some(body) = r.body else {
+            reject("no body lent, so the signature cannot be checked");
             return false;
         };
         match r
@@ -370,6 +404,12 @@ impl WebhookSignature {
         }
         url
     }
+}
+
+/// A reject, said at info (an end-user decline): the reason only, never the signature, secret or
+/// body. The client's verdict stays the one opaque Reject.
+fn reject(reason: &str) {
+    tracing::info!(module = "webhook-signature", reason, "request rejected");
 }
 
 impl VerifyPlugin for WebhookSignature {

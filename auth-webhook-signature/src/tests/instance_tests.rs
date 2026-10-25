@@ -489,3 +489,68 @@ fn the_compiled_in_entry_is_the_door_the_dropped_in_image_exports() {
         door as *const ()
     ));
 }
+
+// ── rejects are logged, never silent ────────────────────────────────────────────────────────────
+
+/// Judge `delivery` under a log capture; the rendered records.
+fn logged(headers: &[(&str, &[u8])], body: Option<&[u8]>, now: u64) -> (Verdict, String) {
+    let cap = busbar_contract::testkit::WarnCapture::capturing_debug();
+    let verdict = tracing::subscriber::with_default(cap.clone(), || delivery(headers, body, now));
+    (verdict, cap.messages().join("\n"))
+}
+
+#[test]
+fn red_a_stale_timestamp_reject_is_logged_with_its_reason_and_no_credential() {
+    let (verdict, log) = logged(ALL, Some(SW_BODY), SW_NOW + 301);
+    assert_eq!(verdict, Verdict::Reject);
+    assert!(log.contains("Stale"), "{log:?}");
+    assert!(log.contains("module=webhook-signature"), "{log:?}");
+    for secret in ["g0hM9SsE", "MfKQ9r8G", "2432232314", "msg_p5jX"] {
+        assert!(!log.contains(secret), "{secret} leaked: {log:?}");
+    }
+}
+
+#[test]
+fn red_every_other_reject_is_logged_with_its_reason() {
+    let bad_ts: &[(&str, &[u8])] = &[
+        ("webhook-id", SW_ID),
+        ("webhook-timestamp", b"soon"),
+        ("webhook-signature", SW_SIG),
+    ];
+    assert!(logged(bad_ts, Some(SW_BODY), SW_NOW)
+        .1
+        .contains("BadTimestamp"));
+    let wrong: &[(&str, &[u8])] = &[
+        ("webhook-id", SW_ID),
+        ("webhook-timestamp", SW_TS),
+        (
+            "webhook-signature",
+            b"v1,Ceo5qEr07ixe2NLpvHk3FH9bwy/WavXrAFQ/9tdO6mc=",
+        ),
+    ];
+    assert!(logged(wrong, Some(SW_BODY), SW_NOW)
+        .1
+        .contains("BadSignature"));
+    assert!(logged(&ALL[..2], Some(SW_BODY), SW_NOW)
+        .1
+        .contains("partial"));
+    assert!(logged(ALL, None, SW_NOW).1.contains("no body"));
+    let cap = busbar_contract::testkit::WarnCapture::capturing_debug();
+    let bad = tracing::subscriber::with_default(cap.clone(), || {
+        judge(
+            &twilio(),
+            "GET",
+            PATH,
+            Some(QUERY),
+            None,
+            0,
+            &[("x-twilio-signature", b"AAAA")],
+        )
+    });
+    assert_eq!(bad, Verdict::Reject);
+    assert!(
+        cap.contains("twilio signature mismatch"),
+        "{:?}",
+        cap.messages()
+    );
+}

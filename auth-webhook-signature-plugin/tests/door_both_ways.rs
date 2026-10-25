@@ -15,7 +15,8 @@
 use std::mem::zeroed;
 use std::sync::{Arc, Mutex};
 
-use busbar_auth_webhook_signature::signature::twilio_sign;
+use base64::Engine as _;
+use busbar_auth_webhook_signature::signature::twilio_signed_string;
 use busbar_contract::abi::auth::{
     slot, IdentifyOut, IdentityBuf, NamedValue, RequestFacts, StripName, VerifyIn,
     DECISION_CONTINUE, DECISION_STOP, POINT_HEAD_BODY, SPAN_ABSENT, STRIP_FIELD, VERDICT_IDENTITY,
@@ -254,6 +255,13 @@ fn verify(p: &Plugin<Auth>, path: &str, query: Option<&str>, signature: Option<&
         .into_iter()
         .collect();
     verify_req(p, "GET", path, query, None, 0, &headers)
+}
+
+/// A Twilio signature of `url` and `params` under `secret`, as a sender computes it.
+fn twilio_sign(secret: &[u8], url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> String {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, secret);
+    let tag = ring::hmac::sign(&key, &twilio_signed_string(url, params));
+    base64::engine::general_purpose::STANDARD.encode(tag.as_ref())
 }
 
 /// THE TWILIO SCRIPT, one line per call.

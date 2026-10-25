@@ -49,6 +49,7 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "tracing",
  "zeroize",
 ]
 
@@ -56,9 +57,11 @@ dependencies = [
 name = "busbar-auth-webhook-signature-plugin"
 version = "1.6.0"
 dependencies = [
+ "base64",
  "busbar-auth-webhook-signature",
  "busbar-contract",
  "busbar-plugin-loader",
+ "ring",
 ]
 
 [[package]]

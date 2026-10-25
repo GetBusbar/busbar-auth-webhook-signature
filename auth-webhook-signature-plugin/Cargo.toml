@@ -23,3 +23,7 @@ busbar-contract = { workspace = true }
 # (`tests/door_both_ways.rs`) load the linked door and dlopen the built cdylib over busbar's REAL
 # loader: dev-only, never in the shipped artifact.
 busbar-plugin-loader = { workspace = true, features = ["conformance"] }
+# The Twilio test signer (`twilio_sign` is a test helper of the logic crate, not public API): HMAC-SHA1
+# and base64 over the public `twilio_signed_string`.
+ring = { workspace = true }
+base64 = { workspace = true }
