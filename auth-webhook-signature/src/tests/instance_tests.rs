@@ -461,15 +461,15 @@ fn held_as<T>(_: &T) -> &'static str {
 fn the_signing_key_is_held_wiped_on_drop() {
     let twilio = WebhookSignature::new(TWILIO, &[TOKEN]).expect("opens");
     assert!(
-        held_as(&twilio.key).contains("Zeroizing"),
+        held_as(&twilio.current().key).contains("Zeroizing"),
         "{}",
-        held_as(&twilio.key)
+        held_as(&twilio.current().key)
     );
     let sw = WebhookSignature::new(SW, &[SW_SECRET]).expect("opens");
     assert!(
-        held_as(&sw.key).contains("Zeroizing"),
+        held_as(&sw.current().key).contains("Zeroizing"),
         "{}",
-        held_as(&sw.key)
+        held_as(&sw.current().key)
     );
     let decoded = signature::standard_webhooks_key(SW_SECRET).expect("decodes");
     assert!(
