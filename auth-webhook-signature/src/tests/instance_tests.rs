@@ -177,6 +177,32 @@ fn a_twilio_json_post_is_bound_by_its_body_sha256() {
     assert_eq!(post(br#"{"property": "other"}"#), Verdict::Reject);
 }
 
+/// The bodySHA256 branch binds the body by its digest AND checks the signature over the URL: a
+/// correct digest under a signature from another token, or a garbage one, is refused.
+#[test]
+fn red_a_twilio_json_post_with_a_bad_signature_is_rejected_though_its_digest_matches() {
+    let body: &[u8] = br#"{"property": "value", "boolean": true}"#;
+    let query = "bodySHA256=0a1ff7634d9ab3b95db5c9a2dfe9416e41502b283a80c7cf19632632f96e6620";
+    let url = format!("wss://edge.example.com/twilio/status?{query}");
+    let other_token = signature::twilio_sign(b"not-the-token", url.as_bytes(), &[]);
+    for bad in [other_token.as_bytes(), b"AAAAAAAAAAAAAAAAAAAAAAAAAAA="] {
+        let headers: &[(&str, &[u8])] = &[("x-twilio-signature", bad)];
+        assert_eq!(
+            judge(
+                &twilio(),
+                "POST",
+                "/twilio/status",
+                Some(query),
+                Some(body),
+                0,
+                headers
+            ),
+            Verdict::Reject,
+            "{bad:?}"
+        );
+    }
+}
+
 // ── standard-webhooks ───────────────────────────────────────────────────────────────────────────
 
 const SW: &[u8] = br#"{"variant":"standard-webhooks"}"#;
@@ -231,6 +257,64 @@ fn a_verified_delivery_asks_the_kernel_to_admit_its_webhook_id_once_for_the_wind
     assert_eq!(replay(SW_NOW), Some((key.clone(), 301)));
     assert_eq!(replay(SW_NOW - 300), Some((key.clone(), 601)));
     assert_eq!(replay(SW_NOW + 300), Some((key, 1)));
+}
+
+/// Two distinct non-UTF-8 `webhook-id`s are two distinct messages: each gets its own replay key,
+/// so the second genuine message is not refused as a replay of the first.
+#[test]
+fn distinct_non_utf8_webhook_ids_get_distinct_replay_keys() {
+    let key_bytes = signature::standard_webhooks_key(SW_SECRET).unwrap();
+    let replay_key = |id: &[u8]| {
+        let sig = signature::standard_webhooks_sign(&key_bytes, id, SW_TS, SW_BODY);
+        let headers: &[(&str, &[u8])] = &[
+            ("webhook-id", id),
+            ("webhook-timestamp", SW_TS),
+            ("webhook-signature", sig.as_bytes()),
+        ];
+        match delivery(headers, Some(SW_BODY), SW_NOW) {
+            Verdict::Identity(i) => i.replay.expect("a replay claim").key,
+            other => panic!("{other:?}"),
+        }
+    };
+    let ff = replay_key(b"evt-\xff");
+    let fe = replay_key(b"evt-\xfe");
+    assert_ne!(ff, fe);
+    assert_eq!(ff, "standard-webhooks-raw/6576742dff");
+}
+
+/// A tolerance near `u64::MAX` at `now == 0` saturates the replay window instead of overflowing it.
+#[test]
+fn a_huge_tolerance_saturates_the_replay_ttl() {
+    let wide = WebhookSignature::new(
+        br#"{"variant":"standard-webhooks","tolerance_secs":18446744073709551615}"#,
+        &[SW_SECRET],
+    )
+    .expect("settings");
+    let Verdict::Identity(id) = judge(&wide, "POST", "/x", None, Some(SW_BODY), 0, ALL) else {
+        panic!("the published vector verifies");
+    };
+    assert_eq!(id.replay.map(|r| r.ttl_secs), Some(u64::MAX));
+}
+
+/// Under a configured tolerance the replay claim lasts to the end of THAT window, not the default one.
+#[test]
+fn the_replay_ttl_follows_the_configured_tolerance() {
+    let wide = WebhookSignature::new(
+        br#"{"variant":"standard-webhooks","tolerance_secs":600}"#,
+        &[SW_SECRET],
+    )
+    .expect("settings");
+    let Verdict::Identity(id) = judge(&wide, "POST", "/x", None, Some(SW_BODY), SW_NOW + 301, ALL)
+    else {
+        panic!("inside the widened window");
+    };
+    assert_eq!(
+        id.replay.map(|r| (r.key, r.ttl_secs)),
+        Some((
+            "standard-webhooks/msg_p5jXN8AQM9LWM0D4loKWxJek".to_string(),
+            300
+        ))
+    );
 }
 
 /// A Twilio signature has no nonce or timestamp to key a replay claim on: none is asked.
@@ -352,6 +436,17 @@ fn the_signing_secret_is_never_formatted() {
     let shown = format!("{:?} {:?}", twilio(), standard());
     assert!(!shown.contains("twilio-auth-token"), "{shown}");
     assert!(!shown.contains("MfKQ9r8G"), "{shown}");
+    // A leaked `Zeroizing<Vec<u8>>` prints as a byte list, and the Standard Webhooks key held is the
+    // DECODED secret, so the text checks above cannot see it.
+    let list = |b: &[u8]| {
+        let s = format!("{b:?}");
+        s[1..s.len() - 1].to_string()
+    };
+    assert!(!shown.contains(&list(TOKEN)), "{shown}");
+    assert!(
+        !shown.contains(&list(&signature::standard_webhooks_key(SW_SECRET).unwrap())),
+        "{shown}"
+    );
 }
 
 /// The type a value is held as.

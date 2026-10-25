@@ -209,11 +209,19 @@ pub fn standard_webhooks_verify(
     }
     let key = hmac::Key::new(hmac::HMAC_SHA256, key);
     let signed = standard_webhooks_signed(id, timestamp.trim_ascii(), body);
+    // `signed` (the whole body) is hashed ONCE. Verifying each candidate directly against `signed`
+    // re-hashed the body per entry of the attacker-controlled header: an unauthenticated
+    // amplification of entries x body length. Instead each candidate costs one HMAC over its own
+    // few bytes, compared in constant time by ring as HMAC(candidate) against HMAC(expected)
+    // (a double-HMAC, which keeps the comparison in `ring::hmac::verify` without the deprecated
+    // `ring::constant_time`).
+    let expected = hmac::sign(&key, &signed);
+    let expected_mac = hmac::sign(&key, expected.as_ref());
     let matched = signatures
         .split(|b| *b == b' ')
         .filter_map(|entry| entry.strip_prefix(b"v1,"))
         .filter_map(|b64| STANDARD.decode(b64).ok())
-        .any(|tag| hmac::verify(&key, &signed, &tag).is_ok());
+        .any(|tag| hmac::verify(&key, &tag, expected_mac.as_ref()).is_ok());
     if matched {
         Ok(())
     } else {

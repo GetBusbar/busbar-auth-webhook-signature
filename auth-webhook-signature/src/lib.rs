@@ -308,8 +308,23 @@ impl WebhookSignature {
             .unwrap_or(DEFAULT_TOLERANCE_SECS);
         signature::standard_webhooks_verify(&self.key, id, ts, body, sig, r.now, tolerance).ok()?;
         let ts: u64 = std::str::from_utf8(ts.trim_ascii()).ok()?.parse().ok()?;
-        let ttl = ts.saturating_add(tolerance).saturating_sub(r.now) + 1;
-        let key = format!("standard-webhooks/{}", String::from_utf8_lossy(id));
+        let ttl = ts
+            .saturating_add(tolerance)
+            .saturating_sub(r.now)
+            .saturating_add(1);
+        // The key must be injective in the id: a lossy conversion folds distinct non-UTF-8 ids into
+        // one, so those are keyed by their raw hex under a prefix no UTF-8 id's key can share.
+        let key = match std::str::from_utf8(id) {
+            Ok(id) => format!("standard-webhooks/{id}"),
+            Err(_) => {
+                use std::fmt::Write as _;
+                let mut key = String::from("standard-webhooks-raw/");
+                for b in id {
+                    let _ = write!(key, "{b:02x}");
+                }
+                key
+            }
+        };
         Some(Some(Box::new(Replay { key, ttl_secs: ttl })))
     }
 
