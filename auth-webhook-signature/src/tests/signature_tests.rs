@@ -328,3 +328,12 @@ fn red_the_valid_tag_with_one_byte_flipped_is_refused() {
         Err(StandardWebhooksRefusal::BadSignature)
     );
 }
+
+/// The expected tag is held in a buffer that wipes on drop (ring's `Tag` does not).
+#[test]
+fn the_expected_standard_webhooks_tag_is_wiped_on_drop() {
+    fn wipes<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+    let tag = standard_webhooks_expected(&sw_key(), SW_ID, SW_TS, SW_BODY);
+    wipes(&tag);
+    assert_eq!(STANDARD.encode(&tag[..]).as_bytes(), &SW_PUBLISHED[3..]);
+}

@@ -18,8 +18,8 @@ description = "The webhook-signature auth mechanism: an inbound request authenti
 crate-type = ["rlib"]
 
 # DEPENDENCY POLICY. A plugin's closure is `busbar-contract` plus the third-party crates it needs to
-# do its job (owner ruling 2026-09-28, PLUGIN LIBRARIES): JSON settings, `ring`'s HMAC (SHA-1 for
-# `twilio`, SHA-256 for `standard-webhooks`) and SHA-256, and base64. Every version is the
+# do its job (owner ruling 2026-09-28, PLUGIN LIBRARIES): JSON settings, the contract's wiped HMAC-SHA256 (`standard-webhooks`), `ring`'s HMAC-SHA1 (
+# `twilio`; the SDK has no wiped SHA-1) and SHA-256, and base64. Every version is the
 # workspace table's (busbar's at the pin).
 [dependencies]
 busbar-contract = { workspace = true }
@@ -29,3 +29,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # The signing key is wiped on drop (BUSBAR-1.6.0.md THE DESIGN §6: "auth material is zeroised").
 zeroize = { workspace = true }
+# Every reject is logged at info (module = "webhook-signature"), never silent; no credential in a line.
+tracing = { workspace = true }
+
+[dev-dependencies]
+# The contract's test kit (`busbar_contract::testkit::WarnCapture`) for the reject-log tests.
+busbar-contract = { workspace = true, features = ["test-seal"] }

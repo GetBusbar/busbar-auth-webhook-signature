@@ -2,8 +2,10 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE SIGNATURES THEMSELVES, as pure functions: what each variant signs, and the constant-time
-//! check of a presented signature against it. No ABI, no settings, no I/O. The HMACs are `ring`'s;
-//! every comparison of a MAC is `ring::hmac::verify` (constant-time).
+//! check of a presented signature against it. No ABI, no settings, no I/O. `standard-webhooks` is
+//! the contract SDK's wiped HMAC-SHA256, its tag compared with `busbar_contract::constant_time_eq`;
+//! `twilio`'s HMAC-SHA1 is `ring`'s (the SDK has no wiped SHA-1), compared with
+//! `ring::hmac::verify` (constant-time).
 //!
 //! * `twilio` (Twilio's published request-validation algorithm): HMAC-SHA1, keyed by the account's
 //!   auth token, over the full URL Twilio requested followed by every POST form parameter as `name`
@@ -49,6 +51,8 @@ fn twilio_key(secret: &[u8]) -> hmac::Key {
 }
 
 /// The `twilio` signature of `url` and `params` under `secret`, base64 as Twilio presents it.
+/// (Test helper: the service only verifies.)
+#[cfg(test)]
 #[must_use]
 pub fn twilio_sign(secret: &[u8], url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> String {
     let tag = hmac::sign(&twilio_key(secret), &twilio_signed_string(url, params));
@@ -165,12 +169,31 @@ fn standard_webhooks_signed(id: &[u8], timestamp: &[u8], body: &[u8]) -> Vec<u8>
     out
 }
 
-/// The `v1,<base64>` signature of one message under `key` (the decoded secret).
-#[must_use]
-pub fn standard_webhooks_sign(key: &[u8], id: &[u8], timestamp: &[u8], body: &[u8]) -> String {
-    let key = hmac::Key::new(hmac::HMAC_SHA256, key);
-    let tag = hmac::sign(&key, &standard_webhooks_signed(id, timestamp, body));
-    format!("v1,{}", STANDARD.encode(tag.as_ref()))
+/// The expected HMAC-SHA256 tag of one message under `key` (the decoded secret), in a buffer that is
+/// wiped on drop: the contract SDK's wiped HMAC, not `ring::hmac::Key`, whose key schedule is freed
+/// unwiped.
+pub(crate) fn standard_webhooks_expected(
+    key: &[u8],
+    id: &[u8],
+    timestamp: &[u8],
+    body: &[u8],
+) -> Zeroizing<[u8; 32]> {
+    let signed = Zeroizing::new(standard_webhooks_signed(id, timestamp, body));
+    busbar_contract::abi::sdk::hmac::hmac_sha256(key, &signed)
+}
+
+/// The `v1,<base64>` signature of one message, for the in-crate tests.
+#[cfg(test)]
+pub(crate) fn standard_webhooks_sign(
+    key: &[u8],
+    id: &[u8],
+    timestamp: &[u8],
+    body: &[u8],
+) -> String {
+    format!(
+        "v1,{}",
+        STANDARD.encode(&standard_webhooks_expected(key, id, timestamp, body)[..])
+    )
 }
 
 /// Why a Standard Webhooks message did not verify.
@@ -207,21 +230,15 @@ pub fn standard_webhooks_verify(
     if now.abs_diff(ts) > tolerance_secs {
         return Err(StandardWebhooksRefusal::Stale);
     }
-    let key = hmac::Key::new(hmac::HMAC_SHA256, key);
-    let signed = standard_webhooks_signed(id, timestamp.trim_ascii(), body);
-    // `signed` (the whole body) is hashed ONCE. Verifying each candidate directly against `signed`
-    // re-hashed the body per entry of the attacker-controlled header: an unauthenticated
-    // amplification of entries x body length. Instead each candidate costs one HMAC over its own
-    // few bytes, compared in constant time by ring as HMAC(candidate) against HMAC(expected)
-    // (a double-HMAC, which keeps the comparison in `ring::hmac::verify` without the deprecated
-    // `ring::constant_time`).
-    let expected = hmac::sign(&key, &signed);
-    let expected_mac = hmac::sign(&key, expected.as_ref());
+    // The expected tag is computed ONCE (the body is hashed once, not per entry of the
+    // attacker-controlled header: that would be an unauthenticated amplification of entries x body
+    // length) into a wiped buffer; each `v1,` entry is then compared to it in constant time.
+    let expected = standard_webhooks_expected(key, id, timestamp.trim_ascii(), body);
     let matched = signatures
         .split(|b| *b == b' ')
         .filter_map(|entry| entry.strip_prefix(b"v1,"))
-        .filter_map(|b64| STANDARD.decode(b64).ok())
-        .any(|tag| hmac::verify(&key, &tag, expected_mac.as_ref()).is_ok());
+        .filter_map(|b64| STANDARD.decode(b64).ok().map(Zeroizing::new))
+        .any(|tag| busbar_contract::constant_time_eq(&tag[..], &expected[..]));
     if matched {
         Ok(())
     } else {
