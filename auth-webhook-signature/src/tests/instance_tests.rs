@@ -233,6 +233,27 @@ fn a_verified_delivery_asks_the_kernel_to_admit_its_webhook_id_once_for_the_wind
     assert_eq!(replay(SW_NOW + 300), Some((key, 1)));
 }
 
+/// Under a configured tolerance the replay claim lasts to the end of THAT window, not the default one.
+#[test]
+fn the_replay_ttl_follows_the_configured_tolerance() {
+    let wide = WebhookSignature::new(
+        br#"{"variant":"standard-webhooks","tolerance_secs":600}"#,
+        &[SW_SECRET],
+    )
+    .expect("settings");
+    let Verdict::Identity(id) = judge(&wide, "POST", "/x", None, Some(SW_BODY), SW_NOW + 301, ALL)
+    else {
+        panic!("inside the widened window");
+    };
+    assert_eq!(
+        id.replay.map(|r| (r.key, r.ttl_secs)),
+        Some((
+            "standard-webhooks/msg_p5jXN8AQM9LWM0D4loKWxJek".to_string(),
+            300
+        ))
+    );
+}
+
 /// A Twilio signature has no nonce or timestamp to key a replay claim on: none is asked.
 #[test]
 fn a_verified_twilio_request_asks_no_replay_claim() {
