@@ -436,6 +436,17 @@ fn the_signing_secret_is_never_formatted() {
     let shown = format!("{:?} {:?}", twilio(), standard());
     assert!(!shown.contains("twilio-auth-token"), "{shown}");
     assert!(!shown.contains("MfKQ9r8G"), "{shown}");
+    // A leaked `Zeroizing<Vec<u8>>` prints as a byte list, and the Standard Webhooks key held is the
+    // DECODED secret, so the text checks above cannot see it.
+    let list = |b: &[u8]| {
+        let s = format!("{b:?}");
+        s[1..s.len() - 1].to_string()
+    };
+    assert!(!shown.contains(&list(TOKEN)), "{shown}");
+    assert!(
+        !shown.contains(&list(&signature::standard_webhooks_key(SW_SECRET).unwrap())),
+        "{shown}"
+    );
 }
 
 /// The type a value is held as.
