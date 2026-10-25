@@ -233,6 +233,29 @@ fn a_verified_delivery_asks_the_kernel_to_admit_its_webhook_id_once_for_the_wind
     assert_eq!(replay(SW_NOW + 300), Some((key, 1)));
 }
 
+/// Two distinct non-UTF-8 `webhook-id`s are two distinct messages: each gets its own replay key,
+/// so the second genuine message is not refused as a replay of the first.
+#[test]
+fn distinct_non_utf8_webhook_ids_get_distinct_replay_keys() {
+    let key_bytes = signature::standard_webhooks_key(SW_SECRET).unwrap();
+    let replay_key = |id: &[u8]| {
+        let sig = signature::standard_webhooks_sign(&key_bytes, id, SW_TS, SW_BODY);
+        let headers: &[(&str, &[u8])] = &[
+            ("webhook-id", id),
+            ("webhook-timestamp", SW_TS),
+            ("webhook-signature", sig.as_bytes()),
+        ];
+        match delivery(headers, Some(SW_BODY), SW_NOW) {
+            Verdict::Identity(i) => i.replay.expect("a replay claim").key,
+            other => panic!("{other:?}"),
+        }
+    };
+    let ff = replay_key(b"evt-\xff");
+    let fe = replay_key(b"evt-\xfe");
+    assert_ne!(ff, fe);
+    assert_eq!(ff, "standard-webhooks-raw/6576742dff");
+}
+
 /// A Twilio signature has no nonce or timestamp to key a replay claim on: none is asked.
 #[test]
 fn a_verified_twilio_request_asks_no_replay_claim() {
