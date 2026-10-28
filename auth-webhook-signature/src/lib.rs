@@ -269,6 +269,8 @@ struct Keyed {
     /// The HMAC key: the token as given (`twilio`), or the decoded secret (`standard-webhooks`),
     /// wiped on drop (THE DESIGN §6: "auth material is zeroised").
     key: zeroize::Zeroizing<Vec<u8>>,
+    /// The identity's subject ([`Settings::subject`]), resolved once.
+    subject: String,
 }
 
 impl Keyed {
@@ -293,7 +295,12 @@ impl Keyed {
                 "secrets: a standard-webhooks secret is base64, optionally `whsec_`-prefixed",
             )?,
         };
-        Ok(Keyed { settings, key })
+        let subject = settings.subject();
+        Ok(Keyed {
+            settings,
+            key,
+            subject,
+        })
     }
 
     fn judge(&self, r: &Request<'_>) -> Verdict {
@@ -326,7 +333,7 @@ impl Keyed {
         };
         match verified {
             Some(replay) => Verdict::Identity(VerifiedIdentity {
-                subject: self.settings.subject(),
+                subject: self.subject.clone(),
                 provider: Some(SCHEME_ALTERNATIVE.to_string()),
                 replay,
                 ..VerifiedIdentity::default()
