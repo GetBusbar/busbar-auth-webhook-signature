@@ -3,7 +3,7 @@
 
 //! # busbar-auth-webhook-signature — an inbound request signed by its sender, one auth-kind plugin
 //!
-//! THE MECHANISM: a webhook sender that holds no busbar credential signs each request with a secret
+//! The mechanism: a webhook sender that holds no busbar credential signs each request with a secret
 //! it shares with the receiver — an HMAC over what it sent — and presents the signature in a header.
 //! This plugin checks that signature on the auth kind's inbound `verify` (webhook
 //! signature verification belongs to the auth kind; the request's handler never sees the secret).
@@ -22,15 +22,14 @@
 //! `unsafe`. Its settings are one JSON document ([`Settings`]); its one secret, the shared signing
 //! secret, arrives through the secret kind as the Statement's `signing_secret` reference (its former
 //! name `signing-secret` still accepted) and is
-//! never logged or echoed. Its inbound point is `HeadBody` (THE DESIGN, "Auth points and guest
-//! lists"): the host lends the whole body, bounded by the size gate, so a signature over the body is
+//! never logged or echoed. Its inbound point is `HeadBody`: the host lends the whole body, bounded by the size gate, so a signature over the body is
 //! checked over the bytes received; a request whose signature covers a body (every Standard
 //! Webhooks message and every Twilio non-GET) is refused when the host lent no body (fail-closed);
 //! a Twilio GET signs the URL alone.
 //! Whatever its verdict, it names its signature header lines for the transport to strip, so the
 //! request's handler never sees them.
 //!
-//! THE VERDICTS:
+//! The verdicts:
 //! * none of the variant's headers present — PASS: not this plugin's credential. A claim whose only
 //!   alternative is this one is then refused, because nothing identified the request.
 //! * a signature that verifies (and, for `standard-webhooks`, a timestamp within the tolerance) —
@@ -39,11 +38,10 @@
 //!   Reject; the plugin log says why at info (`module = "webhook-signature"`: stale or bad timestamp,
 //!   bad signature, partial headers, no body lent, twilio mismatch), never a signature, secret or body.
 //!
-//! REPLAY: a verified `standard-webhooks` identity carries a replay key
+//! Replay: a verified `standard-webhooks` identity carries a replay key
 //! (`standard-webhooks/<webhook-id>`) and the rest of its tolerance window as TTL; the kernel claims
-//! it in its record store and refuses the same message id again inside the window. A `twilio` identity carries none: its signature has
-//! no nonce or timestamp to key on, and v1.5.5 had no Twilio surface whose behaviour to keep
-//! (`git grep -i twilio v1.5.5`: 0 hits). A signature replayed on ANOTHER URL, or over another body,
+//! it in its record store and refuses the same message id again inside the window. A `twilio` identity
+//! carries none: its signature has no nonce or timestamp to key on. A signature replayed on ANOTHER URL, or over another body,
 //! does not verify.
 
 #![forbid(unsafe_code)]
@@ -267,7 +265,7 @@ impl WebhookSignature {
 struct Keyed {
     settings: Settings,
     /// The HMAC key: the token as given (`twilio`), or the decoded secret (`standard-webhooks`),
-    /// wiped on drop (THE DESIGN §6: "auth material is zeroised").
+    /// wiped on drop (auth material is zeroised).
     key: zeroize::Zeroizing<Vec<u8>>,
     /// The identity's subject ([`Settings::subject`]), resolved once.
     subject: String,
@@ -310,9 +308,7 @@ impl Keyed {
                 let Some(presented) = r.get(TWILIO_SIGNATURE_HEADER) else {
                     return Verdict::Pass;
                 };
-                // No replay claim: a Twilio signature carries no nonce or timestamp to key one on,
-                // and there is no earlier behaviour to keep (v1.5.5 has no Twilio surface at all:
-                // `git grep -i twilio v1.5.5` has 0 hits).
+                // No replay claim: a Twilio signature carries no nonce or timestamp to key one on.
                 self.twilio(r, presented).then_some(None)
             }
             Variant::StandardWebhooks => {

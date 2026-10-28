@@ -24,8 +24,6 @@ use base64::Engine as _;
 use ring::hmac;
 use zeroize::Zeroizing;
 
-// ── twilio ──────────────────────────────────────────────────────────────────────────────────────
-
 /// The string a `twilio` signature is computed over: `url`, then each parameter's name and value,
 /// as Twilio's reference validators build it — the DISTINCT names sorted, and under each name its
 /// DISTINCT values sorted (a repeated identical `name=value` pair is signed once).
@@ -147,11 +145,9 @@ pub fn body_sha256_matches(body: &[u8], expected_hex: &[u8]) -> bool {
             .all(|(want, got)| want == got.to_ascii_lowercase())
 }
 
-// ── standard-webhooks ───────────────────────────────────────────────────────────────────────────
-
 /// The signing key of a Standard Webhooks secret: base64, with an optional `whsec_` prefix.
 /// `None` = not base64, or empty. The key is decoded into a buffer sized once and wiped on drop
-/// (THE DESIGN §6: "auth material is zeroised").
+/// (auth material is zeroised).
 #[must_use]
 pub fn standard_webhooks_key(secret: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
     let b64 = secret
