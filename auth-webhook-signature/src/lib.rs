@@ -20,7 +20,8 @@
 //!
 //! It runs on the SDK's safe layer ([`busbar_contract::auth_verify_door!`]): the crate holds no
 //! `unsafe`. Its settings are one JSON document ([`Settings`]); its one secret, the shared signing
-//! secret, arrives through the secret kind as the Statement's `signing-secret` reference and is
+//! secret, arrives through the secret kind as the Statement's `signing_secret` reference (its former
+//! name `signing-secret` still accepted) and is
 //! never logged or echoed. Its inbound point is `HeadBody` (THE DESIGN, "Auth points and guest
 //! lists"): the host lends the whole body, bounded by the size gate, so a signature over the body is
 //! checked over the bytes received; a request whose signature covers a body (every Standard
@@ -64,9 +65,14 @@ use serde::Deserialize;
 /// The scheme alternative a claim names to be authenticated by this plugin.
 pub const SCHEME_ALTERNATIVE: &str = "webhook-signature";
 
-/// The Statement's one secret reference: the shared signing secret (for `twilio`, the account's
-/// auth token; for `standard-webhooks`, the `whsec_` secret), resolved by the secret kind.
-pub const SECRET_REF: &str = "signing-secret";
+/// The Statement's secret reference: the shared signing secret (for `twilio`, the account's auth
+/// token; for `standard-webhooks`, the `whsec_` secret), resolved by the secret kind. Snake case,
+/// as every other auth plugin's settings keys are.
+pub const SECRET_REF: &str = "signing_secret";
+
+/// The signing secret's former settings key, still accepted: an instance sets this or
+/// [`SECRET_REF`], never both.
+pub const SECRET_REF_FORMER: &str = "signing-secret";
 
 /// The header a `twilio` signature is presented in (matched ASCII case-insensitively).
 pub const TWILIO_SIGNATURE_HEADER: &str = "x-twilio-signature";
@@ -268,12 +274,19 @@ struct Keyed {
 impl Keyed {
     fn new(settings: &[u8], secrets: &[&[u8]]) -> Result<Self, &'static str> {
         let settings = Settings::parse(settings)?;
-        let [secret] = secrets else {
+        // The Statement's two references, in order; the host lends an unset one empty.
+        if secrets.is_empty() || secrets.len() > 2 {
             return Err("secrets: exactly one, the signing secret");
-        };
-        if secret.is_empty() {
-            return Err("secrets: the signing secret is empty");
         }
+        let set: Vec<&[u8]> = secrets.iter().copied().filter(|s| !s.is_empty()).collect();
+        let secret =
+            match set.as_slice() {
+                [one] => *one,
+                [] => return Err("secrets: the signing secret is empty"),
+                _ => return Err(
+                    "secrets: set `signing_secret` or its former name `signing-secret`, not both",
+                ),
+            };
         let key = match settings.variant {
             Variant::Twilio => zeroize::Zeroizing::new(secret.to_vec()),
             Variant::StandardWebhooks => signature::standard_webhooks_key(secret).ok_or(
@@ -498,7 +511,7 @@ const CARRIERS: &[MarkWord] = &[
 /// credential. Called at `HeadBody`: the signatures cover the body.
 const TAIL: &AuthTail = &verify_tail(0, AuthPoints::HEAD_BODY);
 
-const SECRET_REFS: &[AbiStr] = &[abi_str(SECRET_REF)];
+const SECRET_REFS: &[AbiStr] = &[abi_str(SECRET_REF), abi_str(SECRET_REF_FORMER)];
 
 /// THE STATEMENT: the plugin's name, version, one secret reference, its carriers and its auth tail.
 pub const STATEMENT: Statement = with_tail(
