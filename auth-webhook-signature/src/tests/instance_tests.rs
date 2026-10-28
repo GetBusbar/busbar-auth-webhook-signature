@@ -384,6 +384,37 @@ fn red_a_missing_standard_webhooks_header_never_identifies() {
 
 // ── settings ────────────────────────────────────────────────────────────────────────────────────
 
+/// The signing secret's key is `signing_secret`, and its former name `signing-secret` is still
+/// accepted: the Statement names both, the host lends the unset one empty, and either alone opens.
+/// Both set is refused, naming the two keys.
+#[test]
+fn the_signing_secret_is_read_under_either_name_never_both() {
+    assert_eq!(
+        (SECRET_REF, SECRET_REF_FORMER),
+        ("signing_secret", "signing-secret")
+    );
+    assert_eq!(SECRET_REFS.len(), 2, "the Statement names both");
+    assert!(
+        WebhookSignature::new(TWILIO, &[TOKEN, b""]).is_ok(),
+        "the new name"
+    );
+    assert!(
+        WebhookSignature::new(TWILIO, &[b"", TOKEN]).is_ok(),
+        "the former name"
+    );
+    assert!(
+        WebhookSignature::new(TWILIO, &[b"", b""]).is_err(),
+        "neither"
+    );
+    let Err(both) = WebhookSignature::new(TWILIO, &[TOKEN, TOKEN]) else {
+        panic!("both set opens");
+    };
+    assert_eq!(
+        both,
+        "secrets: set `signing_secret` or its former name `signing-secret`, not both"
+    );
+}
+
 #[test]
 fn the_settings_and_the_secret_are_checked_at_open() {
     assert!(WebhookSignature::new(TWILIO, &[]).is_err(), "no secret");

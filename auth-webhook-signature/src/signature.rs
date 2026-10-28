@@ -4,8 +4,8 @@
 //! THE SIGNATURES THEMSELVES, as pure functions: what each variant signs, and the constant-time
 //! check of a presented signature against it. No ABI, no settings, no I/O. `standard-webhooks` is
 //! the contract SDK's wiped HMAC-SHA256, its tag compared with `busbar_contract::constant_time_eq`;
-//! `twilio`'s HMAC-SHA1 is `ring`'s (the SDK has no wiped SHA-1), compared with
-//! `ring::hmac::verify` (constant-time).
+//! `twilio`'s HMAC-SHA1 is `ring`'s (the SDK has no wiped SHA-1), fed the signed string in parts,
+//! its tag compared with `busbar_contract::constant_time_eq`.
 //!
 //! * `twilio` (Twilio's published request-validation algorithm): HMAC-SHA1, keyed by the account's
 //!   auth token, over the full URL Twilio requested followed by every POST form parameter as `name`
@@ -24,26 +24,29 @@ use base64::Engine as _;
 use ring::hmac;
 use zeroize::Zeroizing;
 
-// ── twilio ──────────────────────────────────────────────────────────────────────────────────────
-
 /// The string a `twilio` signature is computed over: `url`, then each parameter's name and value,
 /// as Twilio's reference validators build it — the DISTINCT names sorted, and under each name its
 /// DISTINCT values sorted (a repeated identical `name=value` pair is signed once).
 #[must_use]
 pub fn twilio_signed_string(url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
-    let mut by_name: std::collections::BTreeMap<&[u8], std::collections::BTreeSet<&[u8]>> =
-        std::collections::BTreeMap::new();
-    for (name, value) in params {
-        by_name.entry(name).or_default().insert(value);
-    }
     let mut out = url.to_vec();
-    for (name, values) in by_name {
-        for value in values {
-            out.extend_from_slice(name);
-            out.extend_from_slice(value);
-        }
+    for (name, value) in twilio_pairs(params) {
+        out.extend_from_slice(name);
+        out.extend_from_slice(value);
     }
     out
+}
+
+/// The parameters in the order [`twilio_signed_string`] signs them: sorted by name then value, a
+/// repeated identical pair once.
+fn twilio_pairs(params: &[(Vec<u8>, Vec<u8>)]) -> Vec<(&[u8], &[u8])> {
+    let mut pairs: Vec<(&[u8], &[u8])> = params
+        .iter()
+        .map(|(n, v)| (n.as_slice(), v.as_slice()))
+        .collect();
+    pairs.sort_unstable();
+    pairs.dedup();
+    pairs
 }
 
 fn twilio_key(secret: &[u8]) -> hmac::Key {
@@ -71,12 +74,14 @@ pub fn twilio_verify(
     let Ok(tag) = STANDARD.decode(presented.trim_ascii()) else {
         return false;
     };
-    hmac::verify(
-        &twilio_key(secret),
-        &twilio_signed_string(url, params),
-        &tag,
-    )
-    .is_ok()
+    // The signed string fed to the HMAC in its parts, never assembled.
+    let mut ctx = hmac::Context::with_key(&twilio_key(secret));
+    ctx.update(url);
+    for (name, value) in twilio_pairs(params) {
+        ctx.update(name);
+        ctx.update(value);
+    }
+    busbar_contract::constant_time_eq(ctx.sign().as_ref(), &tag)
 }
 
 /// An `application/x-www-form-urlencoded` body as Twilio signs it: each `name=value` pair
@@ -140,11 +145,9 @@ pub fn body_sha256_matches(body: &[u8], expected_hex: &[u8]) -> bool {
             .all(|(want, got)| want == got.to_ascii_lowercase())
 }
 
-// ── standard-webhooks ───────────────────────────────────────────────────────────────────────────
-
 /// The signing key of a Standard Webhooks secret: base64, with an optional `whsec_` prefix.
 /// `None` = not base64, or empty. The key is decoded into a buffer sized once and wiped on drop
-/// (THE DESIGN §6: "auth material is zeroised").
+/// (auth material is zeroised).
 #[must_use]
 pub fn standard_webhooks_key(secret: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
     let b64 = secret
