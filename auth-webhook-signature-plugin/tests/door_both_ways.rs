@@ -100,7 +100,7 @@ fn linked(folds: &Arc<Folds>, d: &Dispatcher) -> Plugin<Auth> {
 /// the test binary, uplifted or hashed under `deps/`). A missing artifact is a failure, never a
 /// skip.
 fn dropped(folds: &Arc<Folds>, d: &Dispatcher) -> Option<Plugin<Auth>> {
-    let path = busbar_plugin_loader::conformance::cdylib_of("busbar_auth_webhook_signature_plugin");
+    let path = busbar_test_kit::conformance::cdylib_of("busbar_auth_webhook_signature_plugin");
     let stated =
         rendering_of(busbar_auth_webhook_signature::door).expect("the door renders its Statement");
     Some(load_dropped::<Auth>(&path, &stated, bind(folds, d)).expect("the dropped door loads"))

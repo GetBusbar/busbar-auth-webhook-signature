@@ -10,7 +10,7 @@
 //! every step's crossings exactly at the script's pin, the two folds equal, and the suite's RED
 //! arms kept. `plugin-ci.yml` runs it under `--release`.
 
-busbar_plugin_loader::conformance_suite! {
+busbar_test_kit::conformance_suite! {
     door: busbar_auth_webhook_signature::door,
     cdylib: "busbar_auth_webhook_signature_plugin",
     inputs: include_str!("conformance.json"),
