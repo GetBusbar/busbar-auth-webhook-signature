@@ -525,7 +525,7 @@ fn the_compiled_in_entry_is_the_door_the_dropped_in_image_exports() {
 
 /// Judge `delivery` under a log capture; the rendered records.
 fn logged(headers: &[(&str, &[u8])], body: Option<&[u8]>, now: u64) -> (Verdict, String) {
-    let cap = busbar_contract::testkit::WarnCapture::capturing_debug();
+    let cap = busbar_test_kit::warn_capture::WarnCapture::capturing_debug();
     let verdict = tracing::subscriber::with_default(cap.clone(), || delivery(headers, body, now));
     (verdict, cap.messages().join("\n"))
 }
@@ -566,7 +566,7 @@ fn red_every_other_reject_is_logged_with_its_reason() {
         .1
         .contains("partial"));
     assert!(logged(ALL, None, SW_NOW).1.contains("no body"));
-    let cap = busbar_contract::testkit::WarnCapture::capturing_debug();
+    let cap = busbar_test_kit::warn_capture::WarnCapture::capturing_debug();
     let bad = tracing::subscriber::with_default(cap.clone(), || {
         judge(
             &twilio(),
