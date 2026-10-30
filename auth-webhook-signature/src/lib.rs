@@ -438,34 +438,38 @@ impl Keyed {
     /// Twilio: a GET signs the URL; a POST whose URL carries `bodySHA256` signs the URL and binds
     /// the body by that digest; any other POST signs the URL plus its form parameters.
     fn twilio(&self, r: &Request<'_>, presented: &[u8]) -> bool {
-        let ok = self.twilio_judged(r, presented);
-        if !ok {
-            reject("twilio signature mismatch (or the signed body could not be judged)");
+        let judged = self.twilio_judged(r, presented);
+        if let Err(reason) = judged {
+            reject(reason);
         }
-        ok
+        judged.is_ok()
     }
 
-    fn twilio_judged(&self, r: &Request<'_>, presented: &[u8]) -> bool {
+    /// `Err` = why the request is refused, logged once by [`Keyed::twilio`].
+    fn twilio_judged(&self, r: &Request<'_>, presented: &[u8]) -> Result<(), &'static str> {
+        const MISMATCH: &str = "twilio signature mismatch";
         let url = self.twilio_url(r.path, r.query);
+        let verified = |params: &[(Vec<u8>, Vec<u8>)]| {
+            signature::twilio_verify(&self.key, &url, params, presented)
+                .then_some(())
+                .ok_or(MISMATCH)
+        };
         if r.method.eq_ignore_ascii_case(b"GET") {
-            return signature::twilio_verify(&self.key, &url, &[], presented);
+            return verified(&[]);
         }
         // A signed request with a body the host did not lend cannot be judged: fail closed.
         let Some(body) = r.body else {
-            reject("no body lent, so the signature cannot be checked");
-            return false;
+            return Err("no body lent, so the signature cannot be checked");
         };
         match r
             .query
             .and_then(|q| signature::query_param(q, b"bodySHA256"))
         {
-            Some(digest) => {
-                signature::body_sha256_matches(body, digest)
-                    && signature::twilio_verify(&self.key, &url, &[], presented)
-            }
-            None => signature::form_params(body).is_some_and(|params| {
-                signature::twilio_verify(&self.key, &url, &params, presented)
-            }),
+            Some(digest) if signature::body_sha256_matches(body, digest) => verified(&[]),
+            Some(_) => Err("bodySHA256 is not the digest of the body"),
+            None => verified(
+                &signature::form_params(body).ok_or("the body is not a form body (bad escape)")?,
+            ),
         }
     }
 
@@ -501,15 +505,23 @@ impl VerifyPlugin for WebhookSignature {
 
     /// A reload: the settings and the re-resolved signing secret `refresh` carries are read as
     /// `open` reads them, and replace the pair held, so a rotated secret verifies from the next
-    /// request on and the old one is refused. A pair that would not open keeps the pair held (a
-    /// refresh cannot refuse, and a held instance never stops judging). Nothing is cached, so
-    /// nothing is dropped: `0`.
+    /// request on and the old one is refused. A pair that would not open is logged at warn and
+    /// keeps the pair held: the SDK's verify `refresh` cannot answer FAILED, and a held instance
+    /// never stops judging. Nothing is cached, so nothing is dropped: `0`.
     fn refresh(&self, settings: &[u8], secrets: &[&[u8]]) -> u64 {
-        if let Ok(keyed) = Keyed::new(settings, secrets) {
-            *self
-                .current
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = std::sync::Arc::new(keyed);
+        match Keyed::new(settings, secrets) {
+            Ok(keyed) => {
+                *self
+                    .current
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    std::sync::Arc::new(keyed);
+            }
+            Err(reason) => tracing::warn!(
+                module = "webhook-signature",
+                reason,
+                "refresh refused; the settings and secret held keep judging"
+            ),
         }
         0
     }
