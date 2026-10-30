@@ -474,7 +474,7 @@ fn every_verdict_names_the_signature_lines_and_a_decision() {
 /// picked up on the same instance, without a re-open: a signature under the new secret identifies
 /// and one under the old secret is refused. A refresh with the unchanged secret (the admin cache
 /// flush) changes nothing; a refresh whose secret or settings would not open keeps what the
-/// instance holds (a refresh cannot refuse). RED on the SDK's no-op default `refresh`.
+/// instance holds (the SDK's verify `refresh` cannot refuse).
 fn rotation_script(p: &Plugin<Auth>) -> Vec<String> {
     const NEW: &str = "the-rotated-twilio-auth-token";
     let old_sig = twilio_sign(TOKEN.as_bytes(), SIGNED_URL.as_bytes(), &[]);

@@ -585,3 +585,148 @@ fn red_every_other_reject_is_logged_with_its_reason() {
         cap.messages()
     );
 }
+
+/// RED (S5, every reject logged ONCE): a signed Twilio POST whose body the host did not lend is one
+/// reject, logged as one record with its reason.
+#[test]
+fn red_a_twilio_post_with_no_body_is_logged_once() {
+    let cap = busbar_test_kit::warn_capture::WarnCapture::capturing_debug();
+    let sig = upgrade_signature();
+    let verdict = tracing::subscriber::with_default(cap.clone(), || {
+        judge(
+            &twilio(),
+            "POST",
+            PATH,
+            Some(QUERY),
+            None,
+            0,
+            &[("x-twilio-signature", sig.as_bytes())],
+        )
+    });
+    assert_eq!(verdict, Verdict::Reject);
+    assert_eq!(cap.count("request rejected"), 1, "{:?}", cap.messages());
+    assert!(cap.contains("no body lent"), "{:?}", cap.messages());
+}
+
+// ── refusal lines ───────────────────────────────────────────────────────────────────────────────
+
+/// Settings, secrets, and the line `open` refuses them with.
+type Refused<'a> = (&'a [u8], &'a [&'a [u8]], &'a str);
+
+/// RED (S2): every settings refusal is an instance-relative line naming the setting
+/// (`settings.<key>: <reason>`), and every secret refusal names the secret reference.
+#[test]
+fn red_settings_and_secret_refusals_name_what_is_wrong() {
+    let cases: &[Refused] = &[
+        (b"not json", &[TOKEN], "settings: not well-formed JSON"),
+        (b"[]", &[TOKEN], "settings: must be a JSON object"),
+        (b"{}", &[TOKEN], "settings.variant: required, `twilio` or `standard-webhooks`"),
+        (
+            br#"{"variant":"stripe"}"#,
+            &[TOKEN],
+            "settings.variant: must be `twilio` or `standard-webhooks`",
+        ),
+        (
+            br#"{"variant":"twilio","origin":"wss://edge.example.com","extra":1}"#,
+            &[TOKEN],
+            "settings: an unknown key is set; the keys are `variant`, `origin`, `tolerance_secs` and `subject`",
+        ),
+        (
+            br#"{"variant":"standard-webhooks","tolerance_secs":"300"}"#,
+            &[SW_SECRET],
+            "settings: a value has the wrong type",
+        ),
+        (
+            br#"{"variant":"twilio"}"#,
+            &[TOKEN],
+            "settings.origin: required for `twilio`",
+        ),
+        (
+            br#"{"variant":"twilio","origin":"wss://edge.example.com/"}"#,
+            &[TOKEN],
+            "settings.origin: must be scheme://authority, with no path, query or fragment",
+        ),
+        (
+            br#"{"variant":"twilio","origin":"wss://edge.example.com","tolerance_secs":1}"#,
+            &[TOKEN],
+            "settings.tolerance_secs: a `standard-webhooks` setting",
+        ),
+        (
+            br#"{"variant":"standard-webhooks","origin":"https://x"}"#,
+            &[SW_SECRET],
+            "settings.origin: a `twilio` setting",
+        ),
+        (
+            br#"{"variant":"twilio","origin":"wss://edge.example.com","subject":""}"#,
+            &[TOKEN],
+            "settings.subject: must not be empty",
+        ),
+        (TWILIO, &[b"", b""], "secrets: `signing_secret` is not set"),
+        (TWILIO, &[b"\xff\xfe"], "secrets: `signing_secret` is not UTF-8"),
+        (TWILIO, &[b"", b"\xff\xfe"], "secrets: `signing-secret` is not UTF-8"),
+        (
+            SW,
+            &[b"whsec_%%%"],
+            "secrets: `signing_secret` is not a standard-webhooks secret (base64, optionally `whsec_`-prefixed)",
+        ),
+        (
+            SW,
+            &[b"", b"whsec_%%%"],
+            "secrets: `signing-secret` is not a standard-webhooks secret (base64, optionally `whsec_`-prefixed)",
+        ),
+    ];
+    for (settings, secrets, want) in cases {
+        let Err(got) = WebhookSignature::new(settings, secrets) else {
+            panic!("{} opens", String::from_utf8_lossy(settings));
+        };
+        assert_eq!(got, *want, "{}", String::from_utf8_lossy(settings));
+    }
+}
+
+// ── refresh ─────────────────────────────────────────────────────────────────────────────────────
+
+/// RED (S3/S5): a refresh whose settings or secret would not open is not applied, and is never
+/// silent: one warn record with the refusal line, never the secret. The pair held keeps judging.
+#[test]
+fn red_a_refused_refresh_is_logged_at_warn_and_the_held_pair_keeps_judging() {
+    let p = twilio();
+    for (settings, secrets, why) in [
+        (
+            &br#"{"variant":"stripe"}"#[..],
+            &[TOKEN][..],
+            "settings.variant: must be `twilio` or `standard-webhooks`",
+        ),
+        (
+            TWILIO,
+            &[&b""[..]][..],
+            "secrets: `signing_secret` is not set",
+        ),
+    ] {
+        let cap = busbar_test_kit::warn_capture::WarnCapture::default();
+        let dropped = tracing::subscriber::with_default(cap.clone(), || {
+            VerifyPlugin::refresh(&p, settings, secrets)
+        });
+        assert_eq!(dropped, 0);
+        assert_eq!(cap.count("refresh refused"), 1, "{:?}", cap.messages());
+        assert!(cap.contains(why), "{:?}", cap.messages());
+        assert!(
+            cap.contains("module=webhook-signature"),
+            "{:?}",
+            cap.messages()
+        );
+        assert!(!cap.contains("twilio-auth-token"), "{:?}", cap.messages());
+    }
+    let sig = upgrade_signature();
+    assert_eq!(
+        judge(
+            &p,
+            "GET",
+            PATH,
+            Some(QUERY),
+            None,
+            0,
+            &[("x-twilio-signature", sig.as_bytes())],
+        ),
+        identity("webhook-signature:twilio")
+    );
+}
