@@ -530,60 +530,71 @@ fn logged(headers: &[(&str, &[u8])], body: Option<&[u8]>, now: u64) -> (Verdict,
     (verdict, cap.messages().join("\n"))
 }
 
+/// Every reject reason, as the one log shape says it (`reason` = a short word), and never a
+/// credential: not the signature presented, the signing secret, the body or the message id.
 #[test]
-fn red_a_stale_timestamp_reject_is_logged_with_its_reason_and_no_credential() {
-    let (verdict, log) = logged(ALL, Some(SW_BODY), SW_NOW + 301);
-    assert_eq!(verdict, Verdict::Reject);
-    assert!(log.contains("Stale"), "{log:?}");
-    assert!(log.contains("module=webhook-signature"), "{log:?}");
-    for secret in ["g0hM9SsE", "MfKQ9r8G", "2432232314", "msg_p5jX"] {
-        assert!(!log.contains(secret), "{secret} leaked: {log:?}");
-    }
-}
-
-#[test]
-fn red_every_other_reject_is_logged_with_its_reason() {
+fn red_every_reject_is_logged_with_its_short_reason_and_no_credential() {
     let bad_ts: &[(&str, &[u8])] = &[
         ("webhook-id", SW_ID),
         ("webhook-timestamp", b"soon"),
         ("webhook-signature", SW_SIG),
     ];
-    assert!(logged(bad_ts, Some(SW_BODY), SW_NOW)
-        .1
-        .contains("BadTimestamp"));
+    let wrong_sig: &[u8] = b"v1,Ceo5qEr07ixe2NLpvHk3FH9bwy/WavXrAFQ/9tdO6mc=";
     let wrong: &[(&str, &[u8])] = &[
         ("webhook-id", SW_ID),
         ("webhook-timestamp", SW_TS),
-        (
-            "webhook-signature",
-            b"v1,Ceo5qEr07ixe2NLpvHk3FH9bwy/WavXrAFQ/9tdO6mc=",
-        ),
+        ("webhook-signature", wrong_sig),
     ];
-    assert!(logged(wrong, Some(SW_BODY), SW_NOW)
-        .1
-        .contains("BadSignature"));
-    assert!(logged(&ALL[..2], Some(SW_BODY), SW_NOW)
-        .1
-        .contains("partial"));
-    assert!(logged(ALL, None, SW_NOW).1.contains("no body"));
-    let cap = busbar_test_kit::warn_capture::WarnCapture::capturing_debug();
-    let bad = tracing::subscriber::with_default(cap.clone(), || {
-        judge(
-            &twilio(),
-            "GET",
-            PATH,
-            Some(QUERY),
-            None,
-            0,
-            &[("x-twilio-signature", b"AAAA")],
-        )
-    });
-    assert_eq!(bad, Verdict::Reject);
-    assert!(
-        cap.contains("twilio signature mismatch"),
-        "{:?}",
-        cap.messages()
-    );
+    let tw_sig = upgrade_signature();
+    let tw_bad: &[(&str, &[u8])] = &[("x-twilio-signature", b"AAAA")];
+    let tw_good: &[(&str, &[u8])] = &[("x-twilio-signature", tw_sig.as_bytes())];
+    let tw = |method, query, body: Option<&[u8]>, headers: &[(&str, &[u8])]| {
+        let cap = busbar_test_kit::warn_capture::WarnCapture::capturing_debug();
+        let verdict = tracing::subscriber::with_default(cap.clone(), || {
+            judge(&twilio(), method, PATH, query, body, 0, headers)
+        });
+        (verdict, cap.messages().join("\n"))
+    };
+    let digest_bad =
+        Some("bodySHA256=0000000000000000000000000000000000000000000000000000000000000000");
+    let cases: Vec<(&str, (Verdict, String))> = vec![
+        ("stale", logged(ALL, Some(SW_BODY), SW_NOW + 301)),
+        ("bad-timestamp", logged(bad_ts, Some(SW_BODY), SW_NOW)),
+        ("bad-signature", logged(wrong, Some(SW_BODY), SW_NOW)),
+        ("partial-headers", logged(&ALL[..2], Some(SW_BODY), SW_NOW)),
+        ("no-body", logged(ALL, None, SW_NOW)),
+        ("twilio-mismatch", tw("GET", Some(QUERY), None, tw_bad)),
+        (
+            "get-with-body",
+            tw("GET", Some(QUERY), Some(b"smuggled"), tw_good),
+        ),
+        ("no-body", tw("POST", Some(QUERY), None, tw_good)),
+        (
+            "body-digest-mismatch",
+            tw("POST", digest_bad, Some(b"{}"), tw_good),
+        ),
+        ("bad-form-body", tw("POST", None, Some(b"a=%zz"), tw_good)),
+    ];
+    for (reason, (verdict, log)) in &cases {
+        assert_eq!(*verdict, Verdict::Reject, "{reason}");
+        assert!(log.contains(reason), "{reason}: {log:?}");
+        assert!(
+            log.contains("module=webhook-signature"),
+            "{reason}: {log:?}"
+        );
+        for secret in [
+            "g0hM9SsE",
+            "MfKQ9r8G",
+            "2432232314",
+            "msg_p5jX",
+            "Ceo5qEr0",
+            "twilio-auth-token",
+            tw_sig.as_str(),
+            "smuggled",
+        ] {
+            assert!(!log.contains(secret), "{reason}: {secret} leaked: {log:?}");
+        }
+    }
 }
 
 /// RED (S5, every reject logged ONCE): a signed Twilio POST whose body the host did not lend is one
@@ -605,7 +616,7 @@ fn red_a_twilio_post_with_no_body_is_logged_once() {
     });
     assert_eq!(verdict, Verdict::Reject);
     assert_eq!(cap.count("request rejected"), 1, "{:?}", cap.messages());
-    assert!(cap.contains("no body lent"), "{:?}", cap.messages());
+    assert!(cap.contains("no-body"), "{:?}", cap.messages());
 }
 
 // ── refusal lines ───────────────────────────────────────────────────────────────────────────────
@@ -635,6 +646,16 @@ fn red_settings_and_secret_refusals_name_what_is_wrong() {
             br#"{"variant":"standard-webhooks","tolerance_secs":"300"}"#,
             &[SW_SECRET],
             "settings: a value has the wrong type",
+        ),
+        (
+            br#"{"variant":"standard-webhooks","variant":"twilio"}"#,
+            &[SW_SECRET],
+            "settings: a key is set twice",
+        ),
+        (
+            br#"{"variant":"standard-webhooks","tolerance_secs":-1}"#,
+            &[SW_SECRET],
+            "settings.tolerance_secs: out of range, a count of seconds from 0",
         ),
         (
             br#"{"variant":"twilio"}"#,
@@ -728,5 +749,145 @@ fn red_a_refused_refresh_is_logged_at_warn_and_the_held_pair_keeps_judging() {
             &[("x-twilio-signature", sig.as_bytes())],
         ),
         identity("webhook-signature:twilio")
+    );
+}
+
+// ── audit round 1 ───────────────────────────────────────────────────────────────────────────────
+
+/// T2: `Request`'s hand-written `Debug` names the method and path and never a header value or the
+/// body, which carry the signature and the payload.
+#[test]
+fn a_requests_debug_keeps_header_values_and_the_body_out() {
+    let lookup = |_: &str| Some(&b"SECRET-HEADER-VALUE"[..]);
+    let r = Request {
+        method: b"POST",
+        path: b"/hook",
+        query: Some(b"q=1"),
+        body: Some(b"SECRET-BODY"),
+        now: 7,
+        headers: &lookup,
+    };
+    let shown = format!("{r:?} {r:#?}");
+    assert!(shown.contains("POST") && shown.contains("/hook"), "{shown}");
+    assert!(!shown.contains("SECRET"), "{shown}");
+}
+
+/// F1: a twilio GET (or HEAD) signs the URL alone, so a body the host lent is unsigned content: the
+/// request is rejected rather than admitted with the body unchecked.
+#[test]
+fn red_f1_a_twilio_get_or_head_with_a_body_is_rejected() {
+    let sig = upgrade_signature();
+    let headers: &[(&str, &[u8])] = &[("x-twilio-signature", sig.as_bytes())];
+    for method in ["GET", "HEAD"] {
+        assert_eq!(
+            judge(
+                &twilio(),
+                method,
+                PATH,
+                Some(QUERY),
+                Some(b"smuggled"),
+                0,
+                headers
+            ),
+            Verdict::Reject,
+            "{method} with a body"
+        );
+        for body in [None, Some(&b""[..])] {
+            assert_eq!(
+                judge(&twilio(), method, PATH, Some(QUERY), body, 0, headers),
+                identity("webhook-signature:twilio"),
+                "{method} with {body:?}"
+            );
+        }
+    }
+}
+
+/// F2: one rule for both variants: surrounding ASCII whitespace is trimmed from the resolved secret
+/// first, then (standard-webhooks) `whsec_` is stripped; a secret empty after the trim is refused.
+#[test]
+fn red_f2_the_secret_is_trimmed_first_for_both_variants() {
+    let sig = upgrade_signature();
+    let twilio_headers: &[(&str, &[u8])] = &[("x-twilio-signature", sig.as_bytes())];
+    for padded in [&b"twilio-auth-token\n"[..], b" \ttwilio-auth-token\r\n"] {
+        let p = WebhookSignature::new(TWILIO, &[padded]).expect("opens");
+        assert_eq!(
+            judge(&p, "GET", PATH, Some(QUERY), None, 0, twilio_headers),
+            identity("webhook-signature:twilio"),
+            "{padded:?}"
+        );
+    }
+    for padded in [
+        &b"  whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw\n"[..],
+        b"\nMfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw \n",
+        b"whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw\n",
+    ] {
+        let p = WebhookSignature::new(SW, &[padded]).expect("opens");
+        let Verdict::Identity(id) = judge(&p, "POST", "/", None, Some(SW_BODY), SW_NOW, ALL) else {
+            panic!("{padded:?} does not verify");
+        };
+        assert_eq!(id.subject, "webhook-signature:standard-webhooks");
+    }
+    for blank in [&b" \n\t"[..], b"\r\n"] {
+        assert_eq!(
+            WebhookSignature::new(TWILIO, &[blank]).err(),
+            Some("secrets: `signing_secret` is not set")
+        );
+        assert_eq!(
+            WebhookSignature::new(SW, &[blank]).err(),
+            Some("secrets: `signing_secret` is not set")
+        );
+    }
+}
+
+/// F3: Twilio's reference validators accept the URL with the default port added or removed, so a
+/// signature over either form of the configured origin verifies; any other port does not.
+#[test]
+fn red_f3_the_twilio_url_is_also_tried_with_the_default_port_added_or_removed() {
+    let at = |origin: &str, signed: &str| {
+        let settings = format!(r#"{{"variant":"twilio","origin":"{origin}"}}"#);
+        let p = WebhookSignature::new(settings.as_bytes(), &[TOKEN]).expect("opens");
+        let sig = signature::twilio_sign(TOKEN, format!("{signed}{PATH}").as_bytes(), &[]);
+        judge(
+            &p,
+            "GET",
+            PATH,
+            None,
+            None,
+            0,
+            &[("x-twilio-signature", sig.as_bytes())],
+        )
+    };
+    let ok = identity("webhook-signature:twilio");
+    // The configured form, as before.
+    assert_eq!(at("https://h.example", "https://h.example"), ok);
+    // Default port added or removed, per scheme.
+    assert_eq!(at("https://h.example", "https://h.example:443"), ok);
+    assert_eq!(at("https://h.example:443", "https://h.example"), ok);
+    assert_eq!(at("http://h.example", "http://h.example:80"), ok);
+    assert_eq!(at("http://h.example:80", "http://h.example"), ok);
+    assert_eq!(at("wss://h.example", "wss://h.example:443"), ok);
+    assert_eq!(at("https://u@h.example", "https://u@h.example:443"), ok);
+    assert_eq!(at("https://[::1]", "https://[::1]:443"), ok);
+    assert_eq!(at("https://[::1]:443", "https://[::1]"), ok);
+    // Not a default port, or the other scheme's default: no alternate form.
+    assert_eq!(
+        at("https://h.example", "https://h.example:80"),
+        Verdict::Reject
+    );
+    assert_eq!(
+        at("http://h.example", "http://h.example:443"),
+        Verdict::Reject
+    );
+    assert_eq!(
+        at("https://h.example:8443", "https://h.example"),
+        Verdict::Reject
+    );
+    assert_eq!(
+        at("https://h.example:8443", "https://h.example:443"),
+        Verdict::Reject
+    );
+    assert_eq!(
+        at("https://h.example", "https://other.example"),
+        Verdict::Reject
     );
 }

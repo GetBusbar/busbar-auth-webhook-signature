@@ -15,3 +15,15 @@ busbar_test_kit::conformance_suite! {
     cdylib: "busbar_auth_webhook_signature_plugin",
     inputs: include_str!("conformance.json"),
 }
+
+/// The `standard-webhooks` variant over the specification's published vector
+/// (`conformance_standard_webhooks.json`), driven the same two ways. The kit lends the signing
+/// secret out of the settings document by its `signing_secret` key (the Statement's secret
+/// reference), as the host lends it from the secret kind.
+mod standard_webhooks {
+    busbar_test_kit::conformance_suite! {
+        door: busbar_auth_webhook_signature::door,
+        cdylib: "busbar_auth_webhook_signature_plugin",
+        inputs: include_str!("conformance_standard_webhooks.json"),
+    }
+}

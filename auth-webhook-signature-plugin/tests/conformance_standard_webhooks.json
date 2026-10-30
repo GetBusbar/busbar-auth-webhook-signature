@@ -1,0 +1,128 @@
+{
+  "settings": "{\"variant\":\"standard-webhooks\",\"subject\":\"conformance-sender\",\"signing_secret\":\"whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw\"}",
+  "auth": {
+    "bad_settings": [
+      "{ not json",
+      "{\"variant\": \"standard-webhooks\", \"origin\": \"https://conformance.invalid\", \"signing_secret\": \"whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw\"}",
+      "{\"variant\": \"standard-webhooks\", \"signing_secret\": \"whsec_%%%\"}"
+    ],
+    "rotated_settings": "{\"variant\":\"standard-webhooks\",\"subject\":\"conformance-sender\",\"signing_secret\":\"whsec_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\"}",
+    "cases": [
+      {
+        "credential": null,
+        "carriers": {
+          "webhook-id": "msg_p5jXN8AQM9LWM0D4loKWxJek",
+          "webhook-timestamp": "1614265330",
+          "webhook-signature": "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE="
+        },
+        "method": "POST",
+        "path": "/v1/webhooks/inbound",
+        "timestamp": 1614265330,
+        "body": "{\"test\": 2432232314}",
+        "verdict": "identity:conformance-sender"
+      },
+      {
+        "credential": "a-bearer-the-plugin-ignores",
+        "carriers": {
+          "webhook-id": "msg_p5jXN8AQM9LWM0D4loKWxJek",
+          "webhook-timestamp": "1614265330",
+          "webhook-signature": "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE="
+        },
+        "method": "POST",
+        "path": "/v1/webhooks/inbound",
+        "timestamp": 1614265330,
+        "body": "{\"test\": 2432232314}",
+        "verdict": "identity:conformance-sender"
+      },
+      {
+        "credential": null,
+        "carriers": {
+          "webhook-id": "msg_p5jXN8AQM9LWM0D4loKWxJek",
+          "webhook-timestamp": "1614265330",
+          "webhook-signature": "v1,Ceo5qEr07ixe2NLpvHk3FH9bwy/WavXrAFQ/9tdO6mc="
+        },
+        "method": "POST",
+        "path": "/v1/webhooks/inbound",
+        "timestamp": 1614265330,
+        "body": "{\"test\": 2432232314}",
+        "verdict": "reject"
+      },
+      {
+        "credential": null,
+        "carriers": {
+          "webhook-id": "msg_p5jXN8AQM9LWM0D4loKWxJek",
+          "webhook-timestamp": "1614265330",
+          "webhook-signature": "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE="
+        },
+        "method": "POST",
+        "path": "/v1/webhooks/inbound",
+        "timestamp": 1614265631,
+        "body": "{\"test\": 2432232314}",
+        "verdict": "reject"
+      },
+      {
+        "credential": null,
+        "carriers": {
+          "webhook-id": "msg_p5jXN8AQM9LWM0D4loKWxJek",
+          "webhook-timestamp": "soon",
+          "webhook-signature": "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE="
+        },
+        "method": "POST",
+        "path": "/v1/webhooks/inbound",
+        "timestamp": 1614265330,
+        "body": "{\"test\": 2432232314}",
+        "verdict": "reject"
+      },
+      {
+        "credential": null,
+        "carriers": {
+          "webhook-id": "msg_p5jXN8AQM9LWM0D4loKWxJek",
+          "webhook-timestamp": "1614265330",
+          "webhook-signature": "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE="
+        },
+        "method": "POST",
+        "path": "/v1/webhooks/inbound",
+        "timestamp": 1614265330,
+        "verdict": "reject"
+      },
+      {
+        "credential": null,
+        "carriers": {
+          "webhook-id": "msg_p5jXN8AQM9LWM0D4loKWxJek",
+          "webhook-timestamp": "1614265330",
+          "webhook-signature": "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE="
+        },
+        "method": "POST",
+        "path": "/v1/webhooks/inbound",
+        "timestamp": 1614265330,
+        "body": "{\"test\": 1}",
+        "verdict": "reject"
+      },
+      {
+        "credential": null,
+        "carriers": {
+          "webhook-id": "msg_p5jXN8AQM9LWM0D4loKWxJek",
+          "webhook-timestamp": "1614265330"
+        },
+        "method": "POST",
+        "path": "/v1/webhooks/inbound",
+        "timestamp": 1614265330,
+        "body": "{\"test\": 2432232314}",
+        "verdict": "reject"
+      },
+      {
+        "credential": null,
+        "carriers": {},
+        "method": "POST",
+        "path": "/v1/webhooks/inbound",
+        "timestamp": 1614265330,
+        "body": "{\"test\": 2432232314}",
+        "verdict": "pass"
+      }
+    ],
+    "never_echoed": [
+      "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw",
+      "MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
+    ]
+  }
+}
