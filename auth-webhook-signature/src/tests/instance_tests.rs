@@ -730,3 +730,35 @@ fn red_a_refused_refresh_is_logged_at_warn_and_the_held_pair_keeps_judging() {
         identity("webhook-signature:twilio")
     );
 }
+
+// ── audit round 1 ───────────────────────────────────────────────────────────────────────────────
+
+/// F1: a twilio GET (or HEAD) signs the URL alone, so a body the host lent is unsigned content: the
+/// request is rejected rather than admitted with the body unchecked.
+#[test]
+fn red_f1_a_twilio_get_or_head_with_a_body_is_rejected() {
+    let sig = upgrade_signature();
+    let headers: &[(&str, &[u8])] = &[("x-twilio-signature", sig.as_bytes())];
+    for method in ["GET", "HEAD"] {
+        assert_eq!(
+            judge(
+                &twilio(),
+                method,
+                PATH,
+                Some(QUERY),
+                Some(b"smuggled"),
+                0,
+                headers
+            ),
+            Verdict::Reject,
+            "{method} with a body"
+        );
+        for body in [None, Some(&b""[..])] {
+            assert_eq!(
+                judge(&twilio(), method, PATH, Some(QUERY), body, 0, headers),
+                identity("webhook-signature:twilio"),
+                "{method} with {body:?}"
+            );
+        }
+    }
+}
