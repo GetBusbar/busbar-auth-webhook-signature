@@ -24,6 +24,33 @@ use base64::Engine as _;
 use ring::hmac;
 use zeroize::Zeroizing;
 
+/// `origin` (`scheme://authority`) with its scheme's default port added when it has none, or
+/// removed when it is that default: the other form of the URL Twilio's reference validators accept.
+/// The defaults are `https`/`wss` 443 and `http`/`ws` 80. `None` = no default port for the scheme.
+#[must_use]
+pub(crate) fn origin_with_default_port_toggled(origin: &str) -> Option<String> {
+    let (scheme, authority) = origin.split_once("://")?;
+    let default = match scheme.to_ascii_lowercase().as_str() {
+        "https" | "wss" => "443",
+        "http" | "ws" => "80",
+        _ => return None,
+    };
+    // The port is what follows the last `:` of the host part (after any `userinfo@`) when that is
+    // all digits; an IPv6 literal's colons sit inside `[..]`, so its tail ends in `]`.
+    let host_at = authority.rfind('@').map_or(0, |at| at + 1);
+    let host = &authority[host_at..];
+    match host.rfind(':') {
+        Some(colon)
+            if !host[colon + 1..].is_empty()
+                && host[colon + 1..].bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            (&host[colon + 1..] == default)
+                .then(|| format!("{scheme}://{}{}", &authority[..host_at], &host[..colon]))
+        }
+        _ => Some(format!("{origin}:{default}")),
+    }
+}
+
 /// The string a `twilio` signature is computed over: `url`, then each parameter's name and value,
 /// as Twilio's reference validators build it — the DISTINCT names sorted, and under each name its
 /// DISTINCT values sorted (a repeated identical `name=value` pair is signed once).

@@ -293,6 +293,9 @@ struct Keyed {
     key: zeroize::Zeroizing<Vec<u8>>,
     /// The identity's subject ([`Settings::subject`]), resolved once.
     subject: String,
+    /// `twilio` only: the configured origin with its scheme's default port added (if absent) or
+    /// removed (if present), the other URL form Twilio's reference validators accept.
+    alt_origin: Option<String>,
 }
 
 impl Keyed {
@@ -335,10 +338,15 @@ impl Keyed {
             })?,
         };
         let subject = settings.subject();
+        let alt_origin = settings
+            .origin
+            .as_deref()
+            .and_then(signature::origin_with_default_port_toggled);
         Ok(Keyed {
             settings,
             key,
             subject,
+            alt_origin,
         })
     }
 
@@ -452,11 +460,20 @@ impl Keyed {
     /// `Err` = why the request is refused, logged once by [`Keyed::twilio`].
     fn twilio_judged(&self, r: &Request<'_>, presented: &[u8]) -> Result<(), &'static str> {
         const MISMATCH: &str = "twilio signature mismatch";
-        let url = self.twilio_url(r.path, r.query);
+        let origin = self.settings.origin.as_deref().unwrap_or_default();
+        let url = twilio_url(origin, r.path, r.query);
+        let alt_url = self
+            .alt_origin
+            .as_deref()
+            .map(|origin| twilio_url(origin, r.path, r.query));
+        // The URL as configured, then (Twilio's reference validators accept both) with the default
+        // port added or removed. Each is compared in constant time; both are always tried.
         let verified = |params: &[(Vec<u8>, Vec<u8>)]| {
-            signature::twilio_verify(&self.key, &url, params, presented)
-                .then_some(())
-                .ok_or(MISMATCH)
+            let first = signature::twilio_verify(&self.key, &url, params, presented);
+            let second = alt_url
+                .as_deref()
+                .is_some_and(|alt| signature::twilio_verify(&self.key, alt, params, presented));
+            (first | second).then_some(()).ok_or(MISMATCH)
         };
         if r.method.eq_ignore_ascii_case(b"GET") || r.method.eq_ignore_ascii_case(b"HEAD") {
             // The signature covers the URL alone: a body the host lent is unsigned content.
@@ -480,24 +497,18 @@ impl Keyed {
             ),
         }
     }
+}
 
-    /// The URL the sender requested: the configured origin, the received path, and `?query` when
-    /// the request had one.
-    fn twilio_url(&self, path: &[u8], query: Option<&[u8]>) -> Vec<u8> {
-        let mut url = self
-            .settings
-            .origin
-            .as_deref()
-            .unwrap_or_default()
-            .as_bytes()
-            .to_vec();
-        url.extend_from_slice(path);
-        if let Some(q) = query {
-            url.push(b'?');
-            url.extend_from_slice(q);
-        }
-        url
+/// The URL the sender requested: `origin`, the received path, and `?query` when the request had
+/// one.
+fn twilio_url(origin: &str, path: &[u8], query: Option<&[u8]>) -> Vec<u8> {
+    let mut url = origin.as_bytes().to_vec();
+    url.extend_from_slice(path);
+    if let Some(q) = query {
+        url.push(b'?');
+        url.extend_from_slice(q);
     }
+    url
 }
 
 /// A reject, said at info (an end-user decline): the reason only, never the signature, secret or
