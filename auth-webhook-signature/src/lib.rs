@@ -132,30 +132,30 @@ impl Settings {
     /// # Errors
     /// Not a settings object of this plugin, or a field the variant does not take or lacks.
     pub fn parse(settings: &[u8]) -> Result<Self, &'static str> {
-        let s: Settings = serde_json::from_slice(settings)
-            .map_err(|_| "settings: not a webhook-signature settings object")?;
+        let s: Settings =
+            serde_json::from_slice(settings).map_err(|e| decode_refusal(settings, &e))?;
         match s.variant {
             Variant::Twilio => {
                 let Some(origin) = &s.origin else {
-                    return Err("settings: `twilio` requires `origin`");
+                    return Err("settings.origin: required for `twilio`");
                 };
                 if !origin_is_scheme_and_authority(origin) {
                     return Err(
-                        "settings: `origin` must be scheme://authority, with no path, query or fragment",
+                        "settings.origin: must be scheme://authority, with no path, query or fragment",
                     );
                 }
                 if s.tolerance_secs.is_some() {
-                    return Err("settings: `tolerance_secs` is a `standard-webhooks` setting");
+                    return Err("settings.tolerance_secs: a `standard-webhooks` setting");
                 }
             }
             Variant::StandardWebhooks => {
                 if s.origin.is_some() {
-                    return Err("settings: `origin` is a `twilio` setting");
+                    return Err("settings.origin: a `twilio` setting");
                 }
             }
         }
         if s.subject.as_deref() == Some("") {
-            return Err("settings: `subject` must not be empty");
+            return Err("settings.subject: must not be empty");
         }
         Ok(s)
     }
@@ -164,6 +164,30 @@ impl Settings {
         self.subject
             .clone()
             .unwrap_or_else(|| format!("webhook-signature:{}", self.variant.name()))
+    }
+}
+
+/// A settings decode error as a refusal line. The decoder's text is read only to tell the cases
+/// apart and is never returned: a data error quotes the offending value. An unknown key cannot be
+/// named in a `&'static str` (the SDK's `VerifyPlugin::open` answers one), so the line lists the keys.
+fn decode_refusal(settings: &[u8], e: &serde_json::Error) -> &'static str {
+    use serde_json::error::Category;
+    match e.classify() {
+        Category::Syntax | Category::Eof | Category::Io => "settings: not well-formed JSON",
+        Category::Data => {
+            let text = e.to_string();
+            if settings.trim_ascii_start().first() != Some(&b'{') {
+                "settings: must be a JSON object"
+            } else if text.starts_with("missing field `variant`") {
+                "settings.variant: required, `twilio` or `standard-webhooks`"
+            } else if text.starts_with("unknown variant") {
+                "settings.variant: must be `twilio` or `standard-webhooks`"
+            } else if text.starts_with("unknown field") {
+                "settings: an unknown key is set; the keys are `variant`, `origin`, `tolerance_secs` and `subject`"
+            } else {
+                "settings: a value has the wrong type"
+            }
+        }
     }
 }
 
@@ -278,20 +302,34 @@ impl Keyed {
         if secrets.is_empty() || secrets.len() > 2 {
             return Err("secrets: exactly one, the signing secret");
         }
-        let set: Vec<&[u8]> = secrets.iter().copied().filter(|s| !s.is_empty()).collect();
-        let secret =
+        let set: Vec<(usize, &[u8])> = secrets
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, s)| !s.is_empty())
+            .collect();
+        let (former, secret) =
             match set.as_slice() {
-                [one] => *one,
-                [] => return Err("secrets: the signing secret is empty"),
+                [(at, one)] => (*at == 1, *one),
+                [] => return Err("secrets: `signing_secret` is not set"),
                 _ => return Err(
                     "secrets: set `signing_secret` or its former name `signing-secret`, not both",
                 ),
             };
+        if std::str::from_utf8(secret).is_err() {
+            return Err(if former {
+                "secrets: `signing-secret` is not UTF-8"
+            } else {
+                "secrets: `signing_secret` is not UTF-8"
+            });
+        }
         let key = match settings.variant {
             Variant::Twilio => zeroize::Zeroizing::new(secret.to_vec()),
-            Variant::StandardWebhooks => signature::standard_webhooks_key(secret).ok_or(
-                "secrets: a standard-webhooks secret is base64, optionally `whsec_`-prefixed",
-            )?,
+            Variant::StandardWebhooks => signature::standard_webhooks_key(secret).ok_or(if former {
+                "secrets: `signing-secret` is not a standard-webhooks secret (base64, optionally `whsec_`-prefixed)"
+            } else {
+                "secrets: `signing_secret` is not a standard-webhooks secret (base64, optionally `whsec_`-prefixed)"
+            })?,
         };
         let subject = settings.subject();
         Ok(Keyed {
