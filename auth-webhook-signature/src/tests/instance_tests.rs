@@ -610,11 +610,14 @@ fn red_a_twilio_post_with_no_body_is_logged_once() {
 
 // ── refusal lines ───────────────────────────────────────────────────────────────────────────────
 
+/// Settings, secrets, and the line `open` refuses them with.
+type Refused<'a> = (&'a [u8], &'a [&'a [u8]], &'a str);
+
 /// RED (S2): every settings refusal is an instance-relative line naming the setting
 /// (`settings.<key>: <reason>`), and every secret refusal names the secret reference.
 #[test]
 fn red_settings_and_secret_refusals_name_what_is_wrong() {
-    let cases: &[(&[u8], &[&[u8]], &str)] = &[
+    let cases: &[Refused] = &[
         (b"not json", &[TOKEN], "settings: not well-formed JSON"),
         (b"[]", &[TOKEN], "settings: must be a JSON object"),
         (b"{}", &[TOKEN], "settings.variant: required, `twilio` or `standard-webhooks`"),
