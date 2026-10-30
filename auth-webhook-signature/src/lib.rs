@@ -455,7 +455,11 @@ impl Keyed {
                 .then_some(())
                 .ok_or(MISMATCH)
         };
-        if r.method.eq_ignore_ascii_case(b"GET") {
+        if r.method.eq_ignore_ascii_case(b"GET") || r.method.eq_ignore_ascii_case(b"HEAD") {
+            // The signature covers the URL alone: a body the host lent is unsigned content.
+            if r.body.is_some_and(|b| !b.is_empty()) {
+                return Err("get-with-body");
+            }
             return verified(&[]);
         }
         // A signed request with a body the host did not lend cannot be judged: fail closed.
