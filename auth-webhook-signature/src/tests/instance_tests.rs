@@ -530,60 +530,61 @@ fn logged(headers: &[(&str, &[u8])], body: Option<&[u8]>, now: u64) -> (Verdict,
     (verdict, cap.messages().join("\n"))
 }
 
+/// Every reject reason, as the one log shape says it (`reason` = a short word), and never a
+/// credential: not the signature presented, the signing secret, the body or the message id.
 #[test]
-fn red_a_stale_timestamp_reject_is_logged_with_its_reason_and_no_credential() {
-    let (verdict, log) = logged(ALL, Some(SW_BODY), SW_NOW + 301);
-    assert_eq!(verdict, Verdict::Reject);
-    assert!(log.contains("Stale"), "{log:?}");
-    assert!(log.contains("module=webhook-signature"), "{log:?}");
-    for secret in ["g0hM9SsE", "MfKQ9r8G", "2432232314", "msg_p5jX"] {
-        assert!(!log.contains(secret), "{secret} leaked: {log:?}");
-    }
-}
-
-#[test]
-fn red_every_other_reject_is_logged_with_its_reason() {
+fn red_every_reject_is_logged_with_its_short_reason_and_no_credential() {
     let bad_ts: &[(&str, &[u8])] = &[
         ("webhook-id", SW_ID),
         ("webhook-timestamp", b"soon"),
         ("webhook-signature", SW_SIG),
     ];
-    assert!(logged(bad_ts, Some(SW_BODY), SW_NOW)
-        .1
-        .contains("BadTimestamp"));
+    let wrong_sig: &[u8] = b"v1,Ceo5qEr07ixe2NLpvHk3FH9bwy/WavXrAFQ/9tdO6mc=";
     let wrong: &[(&str, &[u8])] = &[
         ("webhook-id", SW_ID),
         ("webhook-timestamp", SW_TS),
-        (
-            "webhook-signature",
-            b"v1,Ceo5qEr07ixe2NLpvHk3FH9bwy/WavXrAFQ/9tdO6mc=",
-        ),
+        ("webhook-signature", wrong_sig),
     ];
-    assert!(logged(wrong, Some(SW_BODY), SW_NOW)
-        .1
-        .contains("BadSignature"));
-    assert!(logged(&ALL[..2], Some(SW_BODY), SW_NOW)
-        .1
-        .contains("partial"));
-    assert!(logged(ALL, None, SW_NOW).1.contains("no body"));
-    let cap = busbar_test_kit::warn_capture::WarnCapture::capturing_debug();
-    let bad = tracing::subscriber::with_default(cap.clone(), || {
-        judge(
-            &twilio(),
-            "GET",
-            PATH,
-            Some(QUERY),
-            None,
-            0,
-            &[("x-twilio-signature", b"AAAA")],
-        )
-    });
-    assert_eq!(bad, Verdict::Reject);
-    assert!(
-        cap.contains("twilio signature mismatch"),
-        "{:?}",
-        cap.messages()
-    );
+    let tw_sig = upgrade_signature();
+    let tw_bad: &[(&str, &[u8])] = &[("x-twilio-signature", b"AAAA")];
+    let tw_good: &[(&str, &[u8])] = &[("x-twilio-signature", tw_sig.as_bytes())];
+    let tw = |method, query, body: Option<&[u8]>, headers: &[(&str, &[u8])]| {
+        let cap = busbar_test_kit::warn_capture::WarnCapture::capturing_debug();
+        let verdict = tracing::subscriber::with_default(cap.clone(), || {
+            judge(&twilio(), method, PATH, query, body, 0, headers)
+        });
+        (verdict, cap.messages().join("\n"))
+    };
+    let digest_bad = Some("bodySHA256=0000000000000000000000000000000000000000000000000000000000000000");
+    let cases: Vec<(&str, (Verdict, String))> = vec![
+        ("stale", logged(ALL, Some(SW_BODY), SW_NOW + 301)),
+        ("bad-timestamp", logged(bad_ts, Some(SW_BODY), SW_NOW)),
+        ("bad-signature", logged(wrong, Some(SW_BODY), SW_NOW)),
+        ("partial-headers", logged(&ALL[..2], Some(SW_BODY), SW_NOW)),
+        ("no-body", logged(ALL, None, SW_NOW)),
+        ("twilio-mismatch", tw("GET", Some(QUERY), None, tw_bad)),
+        ("get-with-body", tw("GET", Some(QUERY), Some(b"smuggled"), tw_good)),
+        ("no-body", tw("POST", Some(QUERY), None, tw_good)),
+        ("body-digest-mismatch", tw("POST", digest_bad, Some(b"{}"), tw_good)),
+        ("bad-form-body", tw("POST", None, Some(b"a=%zz"), tw_good)),
+    ];
+    for (reason, (verdict, log)) in &cases {
+        assert_eq!(*verdict, Verdict::Reject, "{reason}");
+        assert!(log.contains(reason), "{reason}: {log:?}");
+        assert!(log.contains("module=webhook-signature"), "{reason}: {log:?}");
+        for secret in [
+            "g0hM9SsE",
+            "MfKQ9r8G",
+            "2432232314",
+            "msg_p5jX",
+            "Ceo5qEr0",
+            "twilio-auth-token",
+            tw_sig.as_str(),
+            "smuggled",
+        ] {
+            assert!(!log.contains(secret), "{reason}: {secret} leaked: {log:?}");
+        }
+    }
 }
 
 /// RED (S5, every reject logged ONCE): a signed Twilio POST whose body the host did not lend is one
@@ -605,7 +606,7 @@ fn red_a_twilio_post_with_no_body_is_logged_once() {
     });
     assert_eq!(verdict, Verdict::Reject);
     assert_eq!(cap.count("request rejected"), 1, "{:?}", cap.messages());
-    assert!(cap.contains("no body lent"), "{:?}", cap.messages());
+    assert!(cap.contains("no-body"), "{:?}", cap.messages());
 }
 
 // ── refusal lines ───────────────────────────────────────────────────────────────────────────────
@@ -635,6 +636,16 @@ fn red_settings_and_secret_refusals_name_what_is_wrong() {
             br#"{"variant":"standard-webhooks","tolerance_secs":"300"}"#,
             &[SW_SECRET],
             "settings: a value has the wrong type",
+        ),
+        (
+            br#"{"variant":"standard-webhooks","variant":"twilio"}"#,
+            &[SW_SECRET],
+            "settings: a key is set twice",
+        ),
+        (
+            br#"{"variant":"standard-webhooks","tolerance_secs":-1}"#,
+            &[SW_SECRET],
+            "settings.tolerance_secs: out of range, a count of seconds from 0",
         ),
         (
             br#"{"variant":"twilio"}"#,
@@ -732,6 +743,24 @@ fn red_a_refused_refresh_is_logged_at_warn_and_the_held_pair_keeps_judging() {
 }
 
 // ── audit round 1 ───────────────────────────────────────────────────────────────────────────────
+
+/// T2: `Request`'s hand-written `Debug` names the method and path and never a header value or the
+/// body, which carry the signature and the payload.
+#[test]
+fn a_requests_debug_keeps_header_values_and_the_body_out() {
+    let lookup = |_: &str| Some(&b"SECRET-HEADER-VALUE"[..]);
+    let r = Request {
+        method: b"POST",
+        path: b"/hook",
+        query: Some(b"q=1"),
+        body: Some(b"SECRET-BODY"),
+        now: 7,
+        headers: &lookup,
+    };
+    let shown = format!("{r:?} {r:#?}");
+    assert!(shown.contains("POST") && shown.contains("/hook"), "{shown}");
+    assert!(!shown.contains("SECRET"), "{shown}");
+}
 
 /// F1: a twilio GET (or HEAD) signs the URL alone, so a body the host lent is unsigned content: the
 /// request is rejected rather than admitted with the body unchecked.
