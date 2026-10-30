@@ -26,7 +26,7 @@
 //! checked over the bytes received; a request whose signature covers a body (every Standard
 //! Webhooks message and every Twilio non-GET) is refused when the host lent no body (fail-closed);
 //! a Twilio GET signs the URL alone.
-//! Whatever its verdict, it names its signature header lines for the transport to strip, so the
+//! Whatever its verdict, it names its variant's own signature header lines (and no other variant's) for the transport to strip, so the
 //! request's handler never sees them.
 //!
 //! The verdicts:
@@ -100,6 +100,19 @@ impl Variant {
         match self {
             Variant::Twilio => "twilio",
             Variant::StandardWebhooks => "standard-webhooks",
+        }
+    }
+
+    /// The header lines this variant judges: the ones its instance strips. An instance never
+    /// strips another variant's lines (a `standard-webhooks` instance may follow it in a chain).
+    fn signature_lines(self) -> &'static [&'static str] {
+        match self {
+            Variant::Twilio => &[TWILIO_SIGNATURE_HEADER],
+            Variant::StandardWebhooks => &[
+                WEBHOOK_ID_HEADER,
+                WEBHOOK_TIMESTAMP_HEADER,
+                WEBHOOK_SIGNATURE_HEADER,
+            ],
         }
     }
 }
@@ -547,7 +560,8 @@ impl VerifyPlugin for WebhookSignature {
 
     fn verify(&self, request: &VerifyView<'_>) -> Answer {
         let headers = |name: &str| request.line(name);
-        let verdict = self.judge(&Request {
+        let keyed = self.current();
+        let verdict = keyed.judge(&Request {
             method: request.method(),
             path: request.path(),
             query: request.query(),
@@ -557,21 +571,21 @@ impl VerifyPlugin for WebhookSignature {
             headers: &headers,
         });
         Answer {
-            strips: SIGNATURE_LINES.iter().map(|n| Strip::field(*n)).collect(),
+            strips: keyed
+                .settings
+                .variant
+                .signature_lines()
+                .iter()
+                .map(|n| Strip::field(*n))
+                .collect(),
             ..verdict.into()
         }
     }
 }
 
-/// The signature header lines, named for the transport to strip whatever the verdict.
-const SIGNATURE_LINES: [&str; 4] = [
-    TWILIO_SIGNATURE_HEADER,
-    WEBHOOK_ID_HEADER,
-    WEBHOOK_TIMESTAMP_HEADER,
-    WEBHOOK_SIGNATURE_HEADER,
-];
-
-/// The carriers `verify` reads: the Statement's carrier word marks.
+/// The carriers `verify` reads: the Statement's carrier word marks. The Statement is one per
+/// plugin, not per instance, so it states every variant's lines; an instance strips only its own
+/// ([`Variant::signature_lines`]).
 const CARRIERS: &[MarkWord] = &[
     carrier(TWILIO_SIGNATURE_HEADER),
     carrier(WEBHOOK_ID_HEADER),
