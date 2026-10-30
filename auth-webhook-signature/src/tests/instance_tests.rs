@@ -799,3 +799,41 @@ fn red_f2_the_secret_is_trimmed_first_for_both_variants() {
         );
     }
 }
+
+/// F3: Twilio's reference validators accept the URL with the default port added or removed, so a
+/// signature over either form of the configured origin verifies; any other port does not.
+#[test]
+fn red_f3_the_twilio_url_is_also_tried_with_the_default_port_added_or_removed() {
+    let at = |origin: &str, signed: &str| {
+        let settings = format!(r#"{{"variant":"twilio","origin":"{origin}"}}"#);
+        let p = WebhookSignature::new(settings.as_bytes(), &[TOKEN]).expect("opens");
+        let sig = signature::twilio_sign(TOKEN, format!("{signed}{PATH}").as_bytes(), &[]);
+        judge(
+            &p,
+            "GET",
+            PATH,
+            None,
+            None,
+            0,
+            &[("x-twilio-signature", sig.as_bytes())],
+        )
+    };
+    let ok = identity("webhook-signature:twilio");
+    // The configured form, as before.
+    assert_eq!(at("https://h.example", "https://h.example"), ok);
+    // Default port added or removed, per scheme.
+    assert_eq!(at("https://h.example", "https://h.example:443"), ok);
+    assert_eq!(at("https://h.example:443", "https://h.example"), ok);
+    assert_eq!(at("http://h.example", "http://h.example:80"), ok);
+    assert_eq!(at("http://h.example:80", "http://h.example"), ok);
+    assert_eq!(at("wss://h.example", "wss://h.example:443"), ok);
+    assert_eq!(at("https://u@h.example", "https://u@h.example:443"), ok);
+    assert_eq!(at("https://[::1]", "https://[::1]:443"), ok);
+    assert_eq!(at("https://[::1]:443", "https://[::1]"), ok);
+    // Not a default port, or the other scheme's default: no alternate form.
+    assert_eq!(at("https://h.example", "https://h.example:80"), Verdict::Reject);
+    assert_eq!(at("http://h.example", "http://h.example:443"), Verdict::Reject);
+    assert_eq!(at("https://h.example:8443", "https://h.example"), Verdict::Reject);
+    assert_eq!(at("https://h.example:8443", "https://h.example:443"), Verdict::Reject);
+    assert_eq!(at("https://h.example", "https://other.example"), Verdict::Reject);
+}
