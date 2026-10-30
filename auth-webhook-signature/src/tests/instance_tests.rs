@@ -762,3 +762,40 @@ fn red_f1_a_twilio_get_or_head_with_a_body_is_rejected() {
         }
     }
 }
+
+/// F2: one rule for both variants: surrounding ASCII whitespace is trimmed from the resolved secret
+/// first, then (standard-webhooks) `whsec_` is stripped; a secret empty after the trim is refused.
+#[test]
+fn red_f2_the_secret_is_trimmed_first_for_both_variants() {
+    let sig = upgrade_signature();
+    let twilio_headers: &[(&str, &[u8])] = &[("x-twilio-signature", sig.as_bytes())];
+    for padded in [&b"twilio-auth-token\n"[..], b" \ttwilio-auth-token\r\n"] {
+        let p = WebhookSignature::new(TWILIO, &[padded]).expect("opens");
+        assert_eq!(
+            judge(&p, "GET", PATH, Some(QUERY), None, 0, twilio_headers),
+            identity("webhook-signature:twilio"),
+            "{padded:?}"
+        );
+    }
+    for padded in [
+        &b"  whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw\n"[..],
+        b"\nMfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw \n",
+        b"whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw\n",
+    ] {
+        let p = WebhookSignature::new(SW, &[padded]).expect("opens");
+        let Verdict::Identity(id) = judge(&p, "POST", "/", None, Some(SW_BODY), SW_NOW, ALL) else {
+            panic!("{padded:?} does not verify");
+        };
+        assert_eq!(id.subject, "webhook-signature:standard-webhooks");
+    }
+    for blank in [&b" \n\t"[..], b"\r\n"] {
+        assert_eq!(
+            WebhookSignature::new(TWILIO, &[blank]).err(),
+            Some("secrets: `signing_secret` is not set")
+        );
+        assert_eq!(
+            WebhookSignature::new(SW, &[blank]).err(),
+            Some("secrets: `signing_secret` is not set")
+        );
+    }
+}
