@@ -555,7 +555,8 @@ fn red_every_reject_is_logged_with_its_short_reason_and_no_credential() {
         });
         (verdict, cap.messages().join("\n"))
     };
-    let digest_bad = Some("bodySHA256=0000000000000000000000000000000000000000000000000000000000000000");
+    let digest_bad =
+        Some("bodySHA256=0000000000000000000000000000000000000000000000000000000000000000");
     let cases: Vec<(&str, (Verdict, String))> = vec![
         ("stale", logged(ALL, Some(SW_BODY), SW_NOW + 301)),
         ("bad-timestamp", logged(bad_ts, Some(SW_BODY), SW_NOW)),
@@ -563,15 +564,24 @@ fn red_every_reject_is_logged_with_its_short_reason_and_no_credential() {
         ("partial-headers", logged(&ALL[..2], Some(SW_BODY), SW_NOW)),
         ("no-body", logged(ALL, None, SW_NOW)),
         ("twilio-mismatch", tw("GET", Some(QUERY), None, tw_bad)),
-        ("get-with-body", tw("GET", Some(QUERY), Some(b"smuggled"), tw_good)),
+        (
+            "get-with-body",
+            tw("GET", Some(QUERY), Some(b"smuggled"), tw_good),
+        ),
         ("no-body", tw("POST", Some(QUERY), None, tw_good)),
-        ("body-digest-mismatch", tw("POST", digest_bad, Some(b"{}"), tw_good)),
+        (
+            "body-digest-mismatch",
+            tw("POST", digest_bad, Some(b"{}"), tw_good),
+        ),
         ("bad-form-body", tw("POST", None, Some(b"a=%zz"), tw_good)),
     ];
     for (reason, (verdict, log)) in &cases {
         assert_eq!(*verdict, Verdict::Reject, "{reason}");
         assert!(log.contains(reason), "{reason}: {log:?}");
-        assert!(log.contains("module=webhook-signature"), "{reason}: {log:?}");
+        assert!(
+            log.contains("module=webhook-signature"),
+            "{reason}: {log:?}"
+        );
         for secret in [
             "g0hM9SsE",
             "MfKQ9r8G",
@@ -860,9 +870,24 @@ fn red_f3_the_twilio_url_is_also_tried_with_the_default_port_added_or_removed() 
     assert_eq!(at("https://[::1]", "https://[::1]:443"), ok);
     assert_eq!(at("https://[::1]:443", "https://[::1]"), ok);
     // Not a default port, or the other scheme's default: no alternate form.
-    assert_eq!(at("https://h.example", "https://h.example:80"), Verdict::Reject);
-    assert_eq!(at("http://h.example", "http://h.example:443"), Verdict::Reject);
-    assert_eq!(at("https://h.example:8443", "https://h.example"), Verdict::Reject);
-    assert_eq!(at("https://h.example:8443", "https://h.example:443"), Verdict::Reject);
-    assert_eq!(at("https://h.example", "https://other.example"), Verdict::Reject);
+    assert_eq!(
+        at("https://h.example", "https://h.example:80"),
+        Verdict::Reject
+    );
+    assert_eq!(
+        at("http://h.example", "http://h.example:443"),
+        Verdict::Reject
+    );
+    assert_eq!(
+        at("https://h.example:8443", "https://h.example"),
+        Verdict::Reject
+    );
+    assert_eq!(
+        at("https://h.example:8443", "https://h.example:443"),
+        Verdict::Reject
+    );
+    assert_eq!(
+        at("https://h.example", "https://other.example"),
+        Verdict::Reject
+    );
 }

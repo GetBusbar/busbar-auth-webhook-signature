@@ -506,9 +506,7 @@ impl Keyed {
         {
             Some(digest) if signature::body_sha256_matches(body, digest) => verified(&[]),
             Some(_) => Err("body-digest-mismatch"),
-            None => verified(
-                &signature::form_params(body).ok_or("bad-form-body")?,
-            ),
+            None => verified(&signature::form_params(body).ok_or("bad-form-body")?),
         }
     }
 }
