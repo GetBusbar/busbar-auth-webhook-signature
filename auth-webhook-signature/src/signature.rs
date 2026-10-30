@@ -149,7 +149,7 @@ pub fn body_sha256_matches(body: &[u8], expected_hex: &[u8]) -> bool {
 /// `None` = not base64, or empty. The key is decoded into a buffer sized once and wiped on drop
 /// (auth material is zeroised).
 #[must_use]
-pub fn standard_webhooks_key(secret: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+pub(crate) fn standard_webhooks_key(secret: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
     let b64 = secret
         .strip_prefix(b"whsec_")
         .unwrap_or(secret)
@@ -214,6 +214,8 @@ pub enum StandardWebhooksRefusal {
 /// space-separated list of `version,base64` entries; only `v1` is judged), `now` the wall clock in
 /// seconds, `tolerance_secs` the allowed skew either way.
 ///
+/// `Ok` carries the timestamp, in seconds.
+///
 /// # Errors
 /// The timestamp is malformed or outside the tolerance, or no `v1` entry matches.
 pub fn standard_webhooks_verify(
@@ -224,7 +226,7 @@ pub fn standard_webhooks_verify(
     signatures: &[u8],
     now: u64,
     tolerance_secs: u64,
-) -> Result<(), StandardWebhooksRefusal> {
+) -> Result<u64, StandardWebhooksRefusal> {
     let ts: u64 = std::str::from_utf8(timestamp.trim_ascii())
         .ok()
         .filter(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()))
@@ -243,7 +245,7 @@ pub fn standard_webhooks_verify(
         .filter_map(|b64| STANDARD.decode(b64).ok().map(Zeroizing::new))
         .any(|tag| busbar_contract::constant_time_eq(&tag[..], &expected[..]));
     if matched {
-        Ok(())
+        Ok(ts)
     } else {
         Err(StandardWebhooksRefusal::BadSignature)
     }

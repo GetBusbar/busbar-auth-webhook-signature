@@ -156,7 +156,7 @@ fn the_standard_webhooks_published_vector_signs_and_verifies() {
             SW_NOW,
             FIVE_MIN
         ),
-        Ok(())
+        Ok(SW_NOW)
     );
     // The same secret without its `whsec_` prefix is the same key.
     assert_eq!(
@@ -175,7 +175,7 @@ fn any_one_v1_entry_of_the_signature_list_may_match() {
     .concat();
     assert_eq!(
         standard_webhooks_verify(&sw_key(), SW_ID, SW_TS, SW_BODY, &list, SW_NOW, FIVE_MIN),
-        Ok(())
+        Ok(SW_NOW)
     );
     // The right bytes under a version other than v1 are not judged.
     assert_eq!(
@@ -246,8 +246,8 @@ fn red_a_stale_or_future_timestamp_is_refused_even_with_a_valid_signature() {
             FIVE_MIN,
         )
     };
-    assert_eq!(at(SW_NOW + FIVE_MIN), Ok(()), "at the edge");
-    assert_eq!(at(SW_NOW - FIVE_MIN), Ok(()), "at the other edge");
+    assert_eq!(at(SW_NOW + FIVE_MIN), Ok(SW_NOW), "at the edge");
+    assert_eq!(at(SW_NOW - FIVE_MIN), Ok(SW_NOW), "at the other edge");
     assert_eq!(
         at(SW_NOW + FIVE_MIN + 1),
         Err(StandardWebhooksRefusal::Stale)
@@ -295,7 +295,7 @@ fn a_valid_v1_entry_after_junk_entries_still_verifies() {
     .join(&b' ');
     assert_eq!(
         standard_webhooks_verify(&sw_key(), SW_ID, SW_TS, SW_BODY, &list, SW_NOW, FIVE_MIN),
-        Ok(())
+        Ok(SW_NOW)
     );
 }
 

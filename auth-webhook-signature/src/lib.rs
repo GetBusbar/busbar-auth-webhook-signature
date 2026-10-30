@@ -396,25 +396,27 @@ impl Keyed {
             .settings
             .tolerance_secs
             .unwrap_or(DEFAULT_TOLERANCE_SECS);
-        if let Err(refusal) =
-            signature::standard_webhooks_verify(&self.key, id, ts, body, sig, r.now, tolerance)
-        {
-            tracing::info!(
-                module = "webhook-signature",
-                reason = ?refusal,
-                "request rejected: {}",
-                match refusal {
-                    signature::StandardWebhooksRefusal::BadTimestamp =>
-                        "webhook-timestamp is not a count of seconds",
-                    signature::StandardWebhooksRefusal::Stale =>
-                        "webhook-timestamp is outside the tolerance (stale)",
-                    signature::StandardWebhooksRefusal::BadSignature =>
-                        "no v1 entry of webhook-signature matches",
-                }
-            );
-            return None;
-        }
-        let ts: u64 = std::str::from_utf8(ts.trim_ascii()).ok()?.parse().ok()?;
+        let ts = match signature::standard_webhooks_verify(
+            &self.key, id, ts, body, sig, r.now, tolerance,
+        ) {
+            Ok(ts) => ts,
+            Err(refusal) => {
+                tracing::info!(
+                    module = "webhook-signature",
+                    reason = ?refusal,
+                    "request rejected: {}",
+                    match refusal {
+                        signature::StandardWebhooksRefusal::BadTimestamp =>
+                            "webhook-timestamp is not a count of seconds",
+                        signature::StandardWebhooksRefusal::Stale =>
+                            "webhook-timestamp is outside the tolerance (stale)",
+                        signature::StandardWebhooksRefusal::BadSignature =>
+                            "no v1 entry of webhook-signature matches",
+                    }
+                );
+                return None;
+            }
+        };
         let ttl = ts
             .saturating_add(tolerance)
             .saturating_sub(r.now)
