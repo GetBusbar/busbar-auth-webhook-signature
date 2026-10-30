@@ -387,7 +387,6 @@ impl Keyed {
         ts: &[u8],
         sig: &[u8],
     ) -> Option<Option<Box<Replay>>> {
-        // No body lent is a body the signature cannot be checked over.
         let Some(body) = r.body else {
             reject("no body lent, so the signature cannot be checked");
             return None;
