@@ -145,15 +145,14 @@ pub fn body_sha256_matches(body: &[u8], expected_hex: &[u8]) -> bool {
             .all(|(want, got)| want == got.to_ascii_lowercase())
 }
 
-/// The signing key of a Standard Webhooks secret: base64, with an optional `whsec_` prefix.
+/// The signing key of a Standard Webhooks secret: base64, with an optional `whsec_` prefix; surrounding
+/// ASCII whitespace is trimmed first, then the prefix stripped.
 /// `None` = not base64, or empty. The key is decoded into a buffer sized once and wiped on drop
 /// (auth material is zeroised).
 #[must_use]
 pub(crate) fn standard_webhooks_key(secret: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
-    let b64 = secret
-        .strip_prefix(b"whsec_")
-        .unwrap_or(secret)
-        .trim_ascii();
+    let secret = secret.trim_ascii();
+    let b64 = secret.strip_prefix(b"whsec_").unwrap_or(secret);
     let mut key = Zeroizing::new(Vec::with_capacity(b64.len() / 4 * 3 + 3));
     STANDARD
         .decode_vec(b64, &mut key)

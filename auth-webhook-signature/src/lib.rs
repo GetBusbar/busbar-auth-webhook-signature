@@ -302,9 +302,12 @@ impl Keyed {
         if secrets.is_empty() || secrets.len() > 2 {
             return Err("secrets: exactly one, the signing secret");
         }
+        // One rule for both variants: surrounding ASCII whitespace is trimmed from the resolved
+        // secret FIRST (a secret file's trailing newline), then `standard_webhooks_key` strips
+        // `whsec_`. A secret empty after the trim is unset.
         let set: Vec<(usize, &[u8])> = secrets
             .iter()
-            .copied()
+            .map(|s| s.trim_ascii())
             .enumerate()
             .filter(|(_, s)| !s.is_empty())
             .collect();
