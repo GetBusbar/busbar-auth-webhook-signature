@@ -450,12 +450,8 @@ fn every_verdict_names_the_signature_lines_and_a_decision() {
     let p = linked(&folds, &d);
     assert_eq!(open(&p, SETTINGS, TOKEN), Outcome::Ready);
     let valid = twilio_sign(TOKEN.as_bytes(), SIGNED_URL.as_bytes(), &[]);
-    let names = [
-        "x-twilio-signature",
-        "webhook-id",
-        "webhook-timestamp",
-        "webhook-signature",
-    ];
+    // A twilio instance judges (and so strips) only its own header.
+    let names = ["x-twilio-signature"];
     for (sig, verdict, decision) in [
         (Some(valid.as_str()), "identity", DECISION_CONTINUE),
         (Some("%%%"), "reject", DECISION_STOP),
@@ -468,6 +464,28 @@ fn every_verdict_names_the_signature_lines_and_a_decision() {
         assert_eq!(got, decision, "{line}");
         assert_eq!(stripped, names, "{line}");
     }
+}
+
+/// F4: a standard-webhooks instance names its own three header lines, and not the twilio one, so
+/// the other variant's instance later in a chain still sees its header.
+#[test]
+fn a_standard_webhooks_instance_strips_only_its_own_lines() {
+    let d = Dispatcher::new(DispatchConfig::default());
+    let folds = Arc::new(Folds::default());
+    let p = linked(&folds, &d);
+    assert_eq!(
+        open(
+            &p,
+            r#"{"variant":"standard-webhooks"}"#,
+            "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
+        ),
+        Outcome::Ready
+    );
+    let (_, _, stripped) = verify_answer(&p, "POST", "/", None, Some(b"{}"), 0, &[]);
+    assert_eq!(
+        stripped,
+        ["webhook-id", "webhook-timestamp", "webhook-signature"]
+    );
 }
 
 /// THE ROTATION SCRIPT (CREDENTIAL-LOCKDOWN P1.5): a `refresh` carrying a ROTATED signing secret is
