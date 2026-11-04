@@ -1,11 +1,649 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Busbar Inc and contributors
 
-//! The `webhook-signature` auth for busbar: its logic and its door.
-//!
-//! One door, two ways in: a busbar build that links this crate names the door here; the sibling
-//! `busbar-auth-webhook-signature-plugin` cdylib exports the same door as its image's one symbol (`export_door!`). This crate
-//! exports nothing. Write the door with the `auth` kind's SDK in `busbar_contract::abi::sdk`.
+//! # busbar-auth-webhook-signature — an inbound request signed by its sender, one auth-kind plugin
+//! A Twilio GET or HEAD signs the URL alone. Verified Standard Webhooks replay keys use
+//! `standard-webhooks/<webhook-id>` for UTF-8 ids and `standard-webhooks-raw/<lower-case hex>`
+//! for ids that are not UTF-8.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+
+pub mod signature;
+
+use busbar_contract::abi::auth::{AuthPoints, AuthTail};
+use busbar_contract::abi::mechanism::call::AbiStr;
+use busbar_contract::abi::mechanism::door::{MarkWord, Statement};
+use busbar_contract::abi::sdk::auth_door::{
+    carrier, verify_tail, with_tail, Answer, Strip, Verdict, VerifiedIdentity, VerifyPlugin,
+    VerifyView,
+};
+use busbar_contract::abi::sdk::cred::Cred;
+use busbar_contract::abi::sdk::door::{abi_str, statement};
+use busbar_contract::abi::sdk::life::Refusal;
+use busbar_contract::auth_calls::Replay;
+use serde::Deserialize;
+
+/// The scheme alternative a claim names to be authenticated by this plugin.
+pub const SCHEME_ALTERNATIVE: &str = "webhook-signature";
+
+/// The Statement's secret reference: the shared signing secret (for `twilio`, the account's auth
+/// token; for `standard-webhooks`, the `whsec_` secret), resolved by the secret kind. Snake case,
+/// as every other auth plugin's settings keys are.
+pub const SECRET_REF: &str = "signing_secret";
+
+/// The signing secret's former settings key, still accepted: an instance sets this or
+/// [`SECRET_REF`], never both.
+pub const SECRET_REF_FORMER: &str = "signing-secret";
+
+/// The header a `twilio` signature is presented in (matched ASCII case-insensitively).
+pub const TWILIO_SIGNATURE_HEADER: &str = "x-twilio-signature";
+/// The Standard Webhooks message id header.
+pub const WEBHOOK_ID_HEADER: &str = "webhook-id";
+/// The Standard Webhooks timestamp header (seconds since the epoch).
+pub const WEBHOOK_TIMESTAMP_HEADER: &str = "webhook-timestamp";
+/// The Standard Webhooks signature-list header.
+pub const WEBHOOK_SIGNATURE_HEADER: &str = "webhook-signature";
+
+/// The Standard Webhooks default tolerance, either direction: five minutes.
+pub const DEFAULT_TOLERANCE_SECS: u64 = 300;
+
+/// Which sender's algorithm a configured instance checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Variant {
+    /// Twilio: HMAC-SHA1 over the full URL plus the sorted POST form parameters, base64, in
+    /// `X-Twilio-Signature`.
+    Twilio,
+    /// Standard Webhooks: HMAC-SHA256 over `id.timestamp.body`, in `webhook-signature`.
+    StandardWebhooks,
+}
+
+impl Variant {
+    fn name(self) -> &'static str {
+        match self {
+            Variant::Twilio => "twilio",
+            Variant::StandardWebhooks => "standard-webhooks",
+        }
+    }
+
+    /// The header lines this variant judges: the ones its instance strips. An instance never
+    /// strips another variant's lines (a `standard-webhooks` instance may follow it in a chain).
+    fn signature_lines(self) -> &'static [&'static str] {
+        match self {
+            Variant::Twilio => &[TWILIO_SIGNATURE_HEADER],
+            Variant::StandardWebhooks => &[
+                WEBHOOK_ID_HEADER,
+                WEBHOOK_TIMESTAMP_HEADER,
+                WEBHOOK_SIGNATURE_HEADER,
+            ],
+        }
+    }
+}
+
+/// The settings document, one JSON object.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The sender's algorithm.
+    pub variant: Variant,
+    /// `twilio` only, and required there: the scheme and authority the SENDER requested — exactly
+    /// as configured at the sender (for a Twilio Media Stream, the scheme and host of the
+    /// `<Stream url>`, e.g. `wss://edge.example.com`). The signed URL is this, then the received
+    /// path and query, byte for byte. A signature over the same URL with the scheme's default port
+    /// added or removed (`:443` for `https`/`wss`, `:80` for `http`/`ws`) also verifies, as Twilio's
+    /// reference validators accept. Configuration rather than read off the request, because the
+    /// sender signs the URL it was given, not whatever authority a front proxy forwards.
+    #[serde(default)]
+    pub origin: Option<String>,
+    /// `standard-webhooks` only: the allowed distance, in seconds, between `webhook-timestamp` and
+    /// now, either direction. Default [`DEFAULT_TOLERANCE_SECS`].
+    #[serde(default)]
+    pub tolerance_secs: Option<u64>,
+    /// The identity a verified request is attributed to. Default `webhook-signature:<variant>`.
+    #[serde(default)]
+    pub subject: Option<String>,
+}
+
+impl Settings {
+    /// Parse and check a settings document.
+    pub fn parse(settings: &[u8]) -> Result<Self, &'static str> {
+        let s: Settings =
+            serde_json::from_slice(settings).map_err(|e| decode_refusal(settings, &e))?;
+        match s.variant {
+            Variant::Twilio => {
+                let Some(origin) = &s.origin else {
+                    return Err("settings.origin: required for `twilio`");
+                };
+                if !origin_is_scheme_and_authority(origin) {
+                    return Err(
+                        "settings.origin: must be scheme://authority, with no path, query or fragment",
+                    );
+                }
+                if s.tolerance_secs.is_some() {
+                    return Err("settings.tolerance_secs: a `standard-webhooks` setting");
+                }
+            }
+            Variant::StandardWebhooks => {
+                if s.origin.is_some() {
+                    return Err("settings.origin: a `twilio` setting");
+                }
+            }
+        }
+        if s.subject.as_deref() == Some("") {
+            return Err("settings.subject: must not be empty");
+        }
+        Ok(s)
+    }
+
+    fn subject(&self) -> String {
+        self.subject
+            .clone()
+            .unwrap_or_else(|| format!("webhook-signature:{}", self.variant.name()))
+    }
+}
+
+/// A settings decode error as a refusal line. The decoder's text is read only to tell the cases
+/// apart and is never returned: a data error quotes the offending value. An unknown key cannot be
+/// named in a `&'static str` (the SDK's `VerifyPlugin::open` answers one), so the line lists the keys.
+fn decode_refusal(settings: &[u8], e: &serde_json::Error) -> &'static str {
+    use serde_json::error::Category;
+    match e.classify() {
+        Category::Syntax | Category::Eof | Category::Io => "settings: not well-formed JSON",
+        Category::Data => {
+            let text = e.to_string();
+            if settings.trim_ascii_start().first() != Some(&b'{') {
+                "settings: must be a JSON object"
+            } else if text.starts_with("missing field `variant`") {
+                "settings.variant: required, `twilio` or `standard-webhooks`"
+            } else if text.starts_with("unknown variant") {
+                "settings.variant: must be `twilio` or `standard-webhooks`"
+            } else if text.starts_with("duplicate field") {
+                "settings: a key is set twice"
+            } else if text.starts_with("number out of range")
+                || text.starts_with("invalid value: integer")
+            {
+                "settings.tolerance_secs: out of range, a count of seconds from 0"
+            } else if text.starts_with("unknown field") {
+                "settings: an unknown key is set; the keys are `variant`, `origin`, `tolerance_secs` and `subject`"
+            } else {
+                "settings: a value has the wrong type"
+            }
+        }
+    }
+}
+
+/// `scheme://authority`, nothing after the authority.
+fn origin_is_scheme_and_authority(origin: &str) -> bool {
+    let Some((scheme, authority)) = origin.split_once("://") else {
+        return false;
+    };
+    !scheme.is_empty()
+        && scheme
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+        && !authority.is_empty()
+        && !authority.contains(['/', '?', '#'])
+        && !authority
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+        && authority_has_valid_port(authority)
+}
+
+/// Check an explicit port without normalizing the authority used in the signature.
+fn authority_has_valid_port(authority: &str) -> bool {
+    let host_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let valid_port = |port: &str| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit());
+    if let Some(bracketed) = host_port.strip_prefix('[') {
+        let Some((host, suffix)) = bracketed.split_once(']') else {
+            return false;
+        };
+        !host.is_empty() && (suffix.is_empty() || suffix.strip_prefix(':').is_some_and(valid_port))
+    } else {
+        match host_port.split_once(':') {
+            Some((host, port)) => !host.is_empty() && valid_port(port),
+            None => !host_port.is_empty(),
+        }
+    }
+}
+
+/// One request, as much of it as a signature reads.
+#[derive(Clone, Copy)]
+pub struct Request<'a> {
+    /// The method.
+    pub method: &'a [u8],
+    /// The path, raw as received.
+    pub path: &'a [u8],
+    /// The query without `?`, raw as received; `None` = none.
+    pub query: Option<&'a [u8]>,
+    /// The body; `None` = the host lent none.
+    pub body: Option<&'a [u8]>,
+    /// Wall-clock seconds, read once by the host for this call.
+    pub now: u64,
+    /// The header `name` (ASCII case-insensitive), as presented; `None` = absent.
+    pub headers: &'a dyn Fn(&str) -> Option<&'a [u8]>,
+}
+
+impl std::fmt::Debug for Request<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Request")
+            .field("method", &String::from_utf8_lossy(self.method))
+            .field("path", &String::from_utf8_lossy(self.path))
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a> Request<'a> {
+    fn get(&self, name: &str) -> Option<&'a [u8]> {
+        (self.headers)(name)
+    }
+}
+
+/// One configured instance: its settings and its signing key, as the latest `open` or `refresh`
+/// set them. A `refresh` carrying a ROTATED secret (or new settings) swaps them in place, so the new
+/// secret verifies and the old one is refused without a re-open; a request already judging keeps
+/// the pair it started with.
+pub struct WebhookSignature {
+    current: std::sync::RwLock<std::sync::Arc<Keyed>>,
+}
+
+impl std::fmt::Debug for WebhookSignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookSignature")
+            .field("settings", &self.current().settings)
+            .finish_non_exhaustive()
+    }
+}
+
+impl WebhookSignature {
+    /// Build an instance from its settings document and its resolved secrets (the Statement's
+    /// `secret_refs`, in order: `signing_secret` and its former name, one of them set).
+    ///
+    /// # Errors
+    /// The settings are not this plugin's, or the signing secret is missing, empty, set under both
+    /// names, not UTF-8, or (for `standard-webhooks`) not base64.
+    pub fn new(settings: &[u8], secrets: &[&[u8]]) -> Result<Self, &'static str> {
+        Ok(WebhookSignature {
+            current: std::sync::RwLock::new(std::sync::Arc::new(Keyed::new(settings, secrets)?)),
+        })
+    }
+
+    /// The settings and key this instance judges with now.
+    fn current(&self) -> std::sync::Arc<Keyed> {
+        self.current
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Judge one request.
+    #[must_use]
+    pub fn judge(&self, r: &Request<'_>) -> Verdict {
+        self.current().judge(r)
+    }
+}
+
+/// A Twilio token stays opaque; the already-wiped Standard Webhooks helper consumes its decoded
+/// key directly. Neither variant retains an unwiped key schedule.
+enum SigningKey {
+    Twilio(Cred),
+    StandardWebhooks(zeroize::Zeroizing<Vec<u8>>),
+}
+
+/// The settings and the signing key one `open` or `refresh` built.
+struct Keyed {
+    settings: Settings,
+    /// The opaque Twilio credential or the wiped decoded Standard Webhooks secret.
+    key: SigningKey,
+    /// The identity's subject ([`Settings::subject`]), resolved once.
+    subject: String,
+    /// `twilio` only: the configured origin with its scheme's default port added (if absent) or
+    /// removed (if present), the other URL form Twilio's reference validators accept.
+    alt_origin: Option<String>,
+}
+
+impl Keyed {
+    fn new(settings: &[u8], secrets: &[&[u8]]) -> Result<Self, &'static str> {
+        let settings = Settings::parse(settings)?;
+
+        if secrets.is_empty() || secrets.len() > 2 {
+            return Err(
+                "secrets: expected the signing secret, under `signing_secret` or its former name `signing-secret`",
+            );
+        }
+
+        let set: Vec<(usize, &[u8])> = secrets
+            .iter()
+            .map(|s| s.trim_ascii())
+            .enumerate()
+            .filter(|(_, s)| !s.is_empty())
+            .collect();
+        let (former, secret) =
+            match set.as_slice() {
+                [(at, one)] => (*at == 1, *one),
+                [] => return Err("secrets: `signing_secret` is not set"),
+                _ => return Err(
+                    "secrets: set `signing_secret` or its former name `signing-secret`, not both",
+                ),
+            };
+        if std::str::from_utf8(secret).is_err() {
+            return Err(if former {
+                "secrets: `signing-secret` is not UTF-8"
+            } else {
+                "secrets: `signing_secret` is not UTF-8"
+            });
+        }
+        let key = match settings.variant {
+            Variant::Twilio => SigningKey::Twilio(Cred::captured(zeroize::Zeroizing::new(secret.to_vec()))),
+            Variant::StandardWebhooks => SigningKey::StandardWebhooks(
+                signature::standard_webhooks_key(secret).ok_or(if former {
+                    "secrets: `signing-secret` is not a standard-webhooks secret (base64, optionally `whsec_`-prefixed)"
+                } else {
+                    "secrets: `signing_secret` is not a standard-webhooks secret (base64, optionally `whsec_`-prefixed)"
+                })?,
+            ),
+        };
+        let subject = settings.subject();
+        let alt_origin = settings
+            .origin
+            .as_deref()
+            .and_then(signature::origin_with_default_port_toggled);
+        Ok(Keyed {
+            settings,
+            key,
+            subject,
+            alt_origin,
+        })
+    }
+
+    /// A reject names its short, secret-free reason word ([`Verdict::reject`]): the host writes it
+    /// to the operator's logs, never to the client, and the plugin log records it once
+    /// ([`Keyed::reject`]).
+    fn judge(&self, r: &Request<'_>) -> Verdict {
+        let verified: Result<Option<Box<Replay>>, &'static str> = match self.settings.variant {
+            Variant::Twilio => {
+                let Some(presented) = r.get(TWILIO_SIGNATURE_HEADER) else {
+                    return Verdict::Pass;
+                };
+
+                self.twilio_judged(r, presented).map(|()| None)
+            }
+            Variant::StandardWebhooks => {
+                let (id, ts, sig) = (
+                    r.get(WEBHOOK_ID_HEADER),
+                    r.get(WEBHOOK_TIMESTAMP_HEADER),
+                    r.get(WEBHOOK_SIGNATURE_HEADER),
+                );
+                match (id, ts, sig) {
+                    (None, None, None) => return Verdict::Pass,
+                    (Some(id), Some(ts), Some(sig)) => self.standard_webhooks(r, id, ts, sig),
+                    _ => Err("partial-headers"),
+                }
+            }
+        };
+        match verified {
+            Ok(replay) => Verdict::Identity(VerifiedIdentity {
+                subject: self.subject.clone(),
+                provider: Some(SCHEME_ALTERNATIVE.to_string()),
+                replay,
+                ..VerifiedIdentity::default()
+            }),
+            Err(reason) => {
+                self.reject(reason);
+                Verdict::reject(reason)
+            }
+        }
+    }
+
+    /// Standard Webhooks: the signature over `id.timestamp.body` within the tolerance. A verified
+    /// message asks the kernel to admit its `webhook-id` ONCE for the rest of the window in which its
+    /// timestamp is acceptable (`timestamp + tolerance - now`, plus a second), so a replay of the
+    /// same signed message inside the window is refused, and one after it is stale anyway.
+    fn standard_webhooks(
+        &self,
+        r: &Request<'_>,
+        id: &[u8],
+        ts: &[u8],
+        sig: &[u8],
+    ) -> Result<Option<Box<Replay>>, &'static str> {
+        let Some(body) = r.body else {
+            return Err("no-body");
+        };
+        let tolerance = self
+            .settings
+            .tolerance_secs
+            .unwrap_or(DEFAULT_TOLERANCE_SECS);
+        let SigningKey::StandardWebhooks(key) = &self.key else {
+            return Err("bad-signature");
+        };
+        let ts = signature::standard_webhooks_verify(key, id, ts, body, sig, r.now, tolerance)
+            .map_err(|refusal| match refusal {
+                signature::StandardWebhooksRefusal::BadTimestamp => "bad-timestamp",
+                signature::StandardWebhooksRefusal::Stale => "stale",
+                signature::StandardWebhooksRefusal::BadSignature => "bad-signature",
+            })?;
+        let ttl = ts
+            .saturating_add(tolerance)
+            .saturating_sub(r.now)
+            .saturating_add(1);
+
+        let key = match std::str::from_utf8(id) {
+            Ok(id) => format!("standard-webhooks/{id}"),
+            Err(_) => {
+                use std::fmt::Write as _;
+                let mut key = String::from("standard-webhooks-raw/");
+                for b in id {
+                    let _ = write!(key, "{b:02x}");
+                }
+                key
+            }
+        };
+        Ok(Some(Box::new(Replay { key, ttl_secs: ttl })))
+    }
+
+    /// Twilio: a GET or HEAD signs the URL; a POST whose URL carries `bodySHA256` signs the URL and binds
+    /// the body by that digest; any other POST signs the URL plus its form parameters, at most
+    /// [`signature::MAX_FORM_PAIRS`] of them. `Err` = why the request is refused, logged once by
+    /// [`Keyed::judge`].
+    fn twilio_judged(&self, r: &Request<'_>, presented: &[u8]) -> Result<(), &'static str> {
+        const MISMATCH: &str = "twilio-mismatch";
+        let SigningKey::Twilio(key) = &self.key else {
+            return Err(MISMATCH);
+        };
+        let origin = self.settings.origin.as_deref().unwrap_or_default();
+        let url = twilio_url(origin, r.path, r.query);
+        let alt_url = self
+            .alt_origin
+            .as_deref()
+            .map(|origin| twilio_url(origin, r.path, r.query));
+
+        let verified = |params: &[(Vec<u8>, Vec<u8>)]| {
+            signature::twilio_verify_either_cred(key, &url, alt_url.as_deref(), params, presented)
+                .then_some(())
+                .ok_or(MISMATCH)
+        };
+        if r.method.eq_ignore_ascii_case(b"GET") || r.method.eq_ignore_ascii_case(b"HEAD") {
+            if r.body.is_some_and(|b| !b.is_empty()) {
+                return Err("get-with-body");
+            }
+            return verified(&[]);
+        }
+
+        let Some(body) = r.body else {
+            return Err("no-body");
+        };
+        match r
+            .query
+            .and_then(|q| signature::query_param(q, b"bodySHA256"))
+        {
+            Some(digest) if signature::body_sha256_matches(body, digest) => verified(&[]),
+            Some(_) => Err("body-digest-mismatch"),
+            None => signature::twilio_form_verify_either_cred(
+                key,
+                &url,
+                alt_url.as_deref(),
+                body,
+                presented,
+            )
+            .map_err(|refusal| match refusal {
+                signature::FormRefusal::Malformed => "bad-form-body",
+                signature::FormRefusal::TooManyPairs => "too-many-form-pairs",
+            })?
+            .then_some(())
+            .ok_or(MISMATCH),
+        }
+    }
+
+    /// Refusal context uses only the public configured identity, escaped as text, and the static
+    /// variant. Neither the presented signature nor the signing key is logged.
+    fn reject(&self, reason: &str) {
+        tracing::info!(
+            module = "webhook-signature",
+            variant = self.settings.variant.name(),
+            subject = ?self.subject,
+            reason,
+            "request rejected"
+        );
+    }
+}
+
+/// The URL the sender requested: `origin`, the received path, and `?query` when the request had
+/// one.
+fn twilio_url(origin: &str, path: &[u8], query: Option<&[u8]>) -> Vec<u8> {
+    let mut url = origin.as_bytes().to_vec();
+    url.extend_from_slice(path);
+    if let Some(q) = query {
+        url.push(b'?');
+        url.extend_from_slice(q);
+    }
+    url
+}
+
+impl VerifyPlugin for WebhookSignature {
+    fn carriers(&self) -> Option<Vec<String>> {
+        Some(
+            self.current()
+                .settings
+                .variant
+                .signature_lines()
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        )
+    }
+
+    fn open(settings: &[u8], secrets: &[&[u8]]) -> Result<Self, &'static str> {
+        WebhookSignature::new(settings, secrets)
+    }
+
+    fn validate(settings: &[u8]) -> Result<(), Refusal> {
+        Settings::parse(settings)
+            .map(|_| ())
+            .map_err(Refusal::failed)
+    }
+
+    /// Refuse a pair that would not open, preserving the current pair. The memory-ABI REFRESH
+    /// reports that failure to the host. A valid replacement applies atomically; no cache is held.
+    fn reload(&self, settings: &[u8], secrets: &[&[u8]]) -> Result<u64, Refusal> {
+        let keyed = Keyed::new(settings, secrets).map_err(|reason| {
+            let held = self.current();
+            tracing::warn!(
+                module = "webhook-signature",
+                variant = held.settings.variant.name(),
+                subject = ?held.subject,
+                reason,
+                "refresh refused; the settings and secret held keep judging"
+            );
+            Refusal::failed(reason)
+        })?;
+        *self
+            .current
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = std::sync::Arc::new(keyed);
+        Ok(0)
+    }
+
+    /// Compatibility callback for older Rust callers that cannot receive a refusal. The shared
+    /// lifecycle calls `reload`, whose failure is visible to the host.
+    fn refresh(&self, settings: &[u8], secrets: &[&[u8]]) -> u64 {
+        self.reload(settings, secrets).unwrap_or(0)
+    }
+
+    fn verify(&self, request: &VerifyView<'_>) -> Answer {
+        let headers = |name: &str| request.line(name);
+        let keyed = self.current();
+        let verdict = keyed.judge(&Request {
+            method: request.method(),
+            path: request.path(),
+            query: request.query(),
+
+            body: request.body(),
+            now: request.timestamp(),
+            headers: &headers,
+        });
+        Answer {
+            strips: keyed
+                .settings
+                .variant
+                .signature_lines()
+                .iter()
+                .map(|n| Strip::field(*n))
+                .collect(),
+            ..verdict.into()
+        }
+    }
+}
+
+/// The carriers `verify` reads: the Statement's carrier word marks. The Statement is one per
+/// plugin, not per instance, so it states every variant's lines; an instance strips only its own
+/// ([`Variant::signature_lines`]).
+const CARRIERS: &[MarkWord] = &[
+    carrier(TWILIO_SIGNATURE_HEADER),
+    carrier(WEBHOOK_ID_HEADER),
+    carrier(WEBHOOK_TIMESTAMP_HEADER),
+    carrier(WEBHOOK_SIGNATURE_HEADER),
+];
+
+/// Verify-only and NOT cacheable: a signature is a verdict about one request, not a reusable
+/// credential. Called at `HeadBody`: the signatures cover the body.
+const TAIL: &AuthTail = &verify_tail(0, AuthPoints::HEAD_BODY);
+
+const SECRET_REFS: &[AbiStr] = &[abi_str(SECRET_REF), abi_str(SECRET_REF_FORMER)];
+
+/// How many `verify` calls the host may have in flight on one instance (the Statement's
+/// `max_inflight`); each is a pure computation over the request.
+const MAX_INFLIGHT: u32 = 1024;
+
+/// THE STATEMENT: the plugin's name, version, its secret references (`signing_secret` and its former name `signing-secret`), its carriers and its auth tail.
+pub const STATEMENT: Statement = with_tail(
+    Statement {
+        secret_refs: SECRET_REFS.as_ptr(),
+        secret_refs_len: SECRET_REFS.len(),
+        mark_words: CARRIERS.as_ptr(),
+        mark_words_len: CARRIERS.len(),
+        ..statement(
+            "busbar-auth-webhook-signature",
+            env!("CARGO_PKG_VERSION"),
+            MAX_INFLIGHT,
+        )
+    },
+    TAIL,
+);
+
+busbar_contract::auth_verify_door!(WebhookSignature, STATEMENT);
+
+/// THE COMPILED-IN ENTRY a composition root's `auths` row names: the door at
+/// `compiled_in::door::door`, the same [`door`] the dropped-in build exports (compiled-in =
+/// dropped-in), as every sibling auth plugin states it.
+pub mod compiled_in {
+    /// The door and its `MACRO_DOOR` (the `plugin_door!` door a linked table names).
+    pub mod door {
+        pub use crate::{door, MACRO_DOOR};
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/instance_tests.rs"]
+mod tests;
