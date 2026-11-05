@@ -400,30 +400,18 @@ fn red_a_missing_standard_webhooks_header_never_identifies() {
     }
 }
 
-/// The signing secret's key is `signing_secret`, and its former name `signing-secret` is still
-/// accepted: the Statement names both, the host lends the unset one empty, and either alone opens.
-/// Both set is refused, naming the two keys.
+/// Only the one declared `signing_secret` slot may be supplied by the host.
 #[test]
-fn the_signing_secret_is_read_under_either_name_never_both() {
-    assert!(
-        WebhookSignature::new(TWILIO, &[TOKEN, b""]).is_ok(),
-        "the new name"
-    );
-    assert!(
-        WebhookSignature::new(TWILIO, &[b"", TOKEN]).is_ok(),
-        "the former name"
-    );
-    assert!(
-        WebhookSignature::new(TWILIO, &[b"", b""]).is_err(),
-        "neither"
-    );
-    let Err(both) = WebhookSignature::new(TWILIO, &[TOKEN, TOKEN]) else {
-        panic!("both set opens");
-    };
-    assert_eq!(
-        both,
-        "secrets: set `signing_secret` or its former name `signing-secret`, not both"
-    );
+fn the_signing_secret_requires_one_resolved_slot() {
+    assert_eq!(SECRET_REFS.len(), 1);
+    assert_eq!(SECRET_REF, "signing_secret");
+    assert!(WebhookSignature::new(TWILIO, &[TOKEN]).is_ok());
+    for secrets in [&[TOKEN, &b""[..]][..], &[&b""[..], TOKEN][..]] {
+        assert_eq!(
+            WebhookSignature::new(TWILIO, secrets).unwrap_err(),
+            "secrets: expected exactly one `signing_secret`"
+        );
+    }
 }
 
 #[test]
@@ -686,7 +674,7 @@ fn refusal_logs_attribute_the_variant_and_escape_the_configured_subject() {
 
     let cap = RefusalLog::default();
     tracing::subscriber::with_default(cap.subscriber(), || {
-        VerifyPlugin::refresh(&plugin, settings.as_bytes(), &[b""]);
+        assert!(VerifyPlugin::reload(&plugin, settings.as_bytes(), &[b""]).is_err());
     });
     let log = cap.messages().join("\n");
     assert!(log.contains("variant=\"twilio\""), "{log}");
@@ -754,18 +742,12 @@ fn red_settings_and_secret_refusals_name_what_is_wrong() {
             &[TOKEN],
             "settings.subject: must not be empty",
         ),
-        (TWILIO, &[b"", b""], "secrets: `signing_secret` is not set"),
+        (TWILIO, &[b""], "secrets: `signing_secret` is not set"),
         (TWILIO, &[b"\xff\xfe"], "secrets: `signing_secret` is not UTF-8"),
-        (TWILIO, &[b"", b"\xff\xfe"], "secrets: `signing-secret` is not UTF-8"),
         (
             SW,
             &[b"whsec_%%%"],
             "secrets: `signing_secret` is not a standard-webhooks secret (base64, optionally `whsec_`-prefixed)",
-        ),
-        (
-            SW,
-            &[b"", b"whsec_%%%"],
-            "secrets: `signing-secret` is not a standard-webhooks secret (base64, optionally `whsec_`-prefixed)",
         ),
     ];
     for (settings, secrets, want) in cases {
@@ -792,10 +774,10 @@ fn red_a_refused_refresh_is_logged_at_warn_and_the_held_pair_keeps_judging() {
         ),
     ] {
         let cap = RefusalLog::default();
-        let dropped = tracing::subscriber::with_default(cap.subscriber(), || {
-            VerifyPlugin::refresh(&p, settings, secrets)
+        let reloaded = tracing::subscriber::with_default(cap.subscriber(), || {
+            VerifyPlugin::reload(&p, settings, secrets)
         });
-        assert_eq!(dropped, 0);
+        assert!(reloaded.is_err(), "invalid refresh must report failure");
         assert_eq!(cap.count("refresh refused"), 1, "{:?}", cap.messages());
         assert!(cap.contains(why), "{:?}", cap.messages());
         assert!(

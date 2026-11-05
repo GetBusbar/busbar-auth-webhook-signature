@@ -799,6 +799,10 @@ fn validate_refuses_malformed_settings_before_secrets_are_resolved() {
             "settings.tolerance_secs: out of range, a count of seconds from 0",
         ),
         (
+            br#"{"variant":"standard-webhooks","signing-secret":"misplaced-signing-secret"}"#,
+            "settings: an unknown key is set; the keys are `variant`, `origin`, `tolerance_secs` and `subject`",
+        ),
+        (
             br#"{"variant":"standard-webhooks","webhook-validation-private-canary":"misplaced-signing-secret"}"#,
             "settings: an unknown key is set; the keys are `variant`, `origin`, `tolerance_secs` and `subject`",
         ),
@@ -862,10 +866,7 @@ fn split_settings(settings: &[u8]) -> (Vec<u8>, String) {
     };
     let secret = value
         .as_object_mut()
-        .and_then(|o| {
-            o.remove("signing_secret")
-                .or_else(|| o.remove("signing-secret"))
-        })
+        .and_then(|o| o.remove("signing_secret"))
         .and_then(|v| v.as_str().map(str::to_owned))
         .unwrap_or_default();
     (serde_json::to_vec(&value).unwrap(), secret)

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Webhook signature settings",
-  "description": "Lifecycle settings parsed as Settings. signing_secret (and its signing-secret alias) are resolved via the Statement secret_refs and lent separately, never accepted in this object.",
+  "description": "Lifecycle settings parsed as Settings. signing_secret is resolved via the Statement secret_refs and lent separately, never accepted in this object.",
   "type": "object",
   "additionalProperties": false,
   "required": [

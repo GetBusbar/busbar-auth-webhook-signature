@@ -1,12 +1,12 @@
 {
-  "settings": "{\"variant\":\"twilio\",\"origin\":\"https://conformance.invalid\",\"subject\":\"conformance-sender\",\"signing-secret\":\"conformance-twilio-auth-token\"}",
+  "settings": "{\"variant\":\"twilio\",\"origin\":\"https://conformance.invalid\",\"subject\":\"conformance-sender\",\"signing_secret\":\"conformance-twilio-auth-token\"}",
   "auth": {
     "bad_settings": [
       "{ not json",
       "{\"variant\":\"twilio\"}",
       "{\"variant\":\"standard-webhooks\",\"origin\":\"https://conformance.invalid\"}"
     ],
-    "rotated_settings": "{\"variant\":\"twilio\",\"origin\":\"https://other.invalid\",\"subject\":\"conformance-sender\",\"signing-secret\":\"conformance-twilio-auth-token\"}",
+    "rotated_settings": "{\"variant\":\"twilio\",\"origin\":\"https://other.invalid\",\"subject\":\"conformance-sender\",\"signing_secret\":\"conformance-twilio-auth-token\"}",
     "cases": [
       {
         "credential": null,

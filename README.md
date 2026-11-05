@@ -44,9 +44,8 @@ Variants:
 ### Secret
 
 The signing secret (for `twilio` the account auth token, for `standard-webhooks` the base64 `whsec_`
-secret) arrives through the secret kind as the Statement's `signing_secret` reference; the former name
-`signing-secret` is still accepted, but set only one. Surrounding ASCII whitespace is trimmed first
-(then `whsec_` is stripped); a secret empty after that is refused at open and refresh. A refused
+secret) arrives through the secret kind as the Statement's `signing_secret` reference. Surrounding ASCII
+whitespace is trimmed first (then `whsec_` is stripped); a secret empty after that is refused at open and refresh. A refused
 refresh reports failure and leaves the last accepted pair of settings and secret intact. It is
 never logged or echoed.
 

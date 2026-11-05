@@ -32,10 +32,6 @@ pub const SCHEME_ALTERNATIVE: &str = "webhook-signature";
 /// as every other auth plugin's settings keys are.
 pub const SECRET_REF: &str = "signing_secret";
 
-/// The signing secret's former settings key, still accepted: an instance sets this or
-/// [`SECRET_REF`], never both.
-pub const SECRET_REF_FORMER: &str = "signing-secret";
-
 /// The header a `twilio` signature is presented in (matched ASCII case-insensitively).
 pub const TWILIO_SIGNATURE_HEADER: &str = "x-twilio-signature";
 /// The Standard Webhooks message id header.
@@ -145,7 +141,7 @@ impl Settings {
 
 /// A settings decode error as a refusal line. The decoder's text is read only to tell the cases
 /// apart and is never returned: a data error quotes the offending value. An unknown key cannot be
-/// named in a `&'static str` (the SDK's `VerifyPlugin::open` answers one), so the line lists the keys.
+/// named in a `&'static str` (the constructor answers one), so the line lists the keys.
 fn decode_refusal(settings: &[u8], e: &serde_json::Error) -> &'static str {
     use serde_json::error::Category;
     match e.classify() {
@@ -259,11 +255,11 @@ impl std::fmt::Debug for WebhookSignature {
 
 impl WebhookSignature {
     /// Build an instance from its settings document and its resolved secrets (the Statement's
-    /// `secret_refs`, in order: `signing_secret` and its former name, one of them set).
+    /// `secret_refs`: exactly one `signing_secret`).
     ///
     /// # Errors
-    /// The settings are not this plugin's, or the signing secret is missing, empty, set under both
-    /// names, not UTF-8, or (for `standard-webhooks`) not base64.
+    /// The settings are not this plugin's, or the signing secret is missing, empty, supplied in multiple
+    /// slots, not UTF-8, or (for `standard-webhooks`) not base64.
     pub fn new(settings: &[u8], secrets: &[&[u8]]) -> Result<Self, &'static str> {
         Ok(WebhookSignature {
             current: std::sync::RwLock::new(std::sync::Arc::new(Keyed::new(settings, secrets)?)),
@@ -308,42 +304,22 @@ impl Keyed {
     fn new(settings: &[u8], secrets: &[&[u8]]) -> Result<Self, &'static str> {
         let settings = Settings::parse(settings)?;
 
-        if secrets.is_empty() || secrets.len() > 2 {
-            return Err(
-                "secrets: expected the signing secret, under `signing_secret` or its former name `signing-secret`",
-            );
-        }
-
-        let set: Vec<(usize, &[u8])> = secrets
-            .iter()
-            .map(|s| s.trim_ascii())
-            .enumerate()
-            .filter(|(_, s)| !s.is_empty())
-            .collect();
-        let (former, secret) = match set.as_slice() {
-            [(at, one)] => (*at == 1, *one),
-            [] => return Err("secrets: `signing_secret` is not set"),
-            _ => {
-                return Err(
-                    "secrets: set `signing_secret` or its former name `signing-secret`, not both",
-                );
-            }
+        let [secret] = secrets else {
+            return Err("secrets: expected exactly one `signing_secret`");
         };
+        let secret = secret.trim_ascii();
+        if secret.is_empty() {
+            return Err("secrets: `signing_secret` is not set");
+        }
         if std::str::from_utf8(secret).is_err() {
-            return Err(if former {
-                "secrets: `signing-secret` is not UTF-8"
-            } else {
-                "secrets: `signing_secret` is not UTF-8"
-            });
+            return Err("secrets: `signing_secret` is not UTF-8");
         }
         let key = match settings.variant {
             Variant::Twilio => SigningKey::Twilio(Cred::captured(zeroize::Zeroizing::new(secret.to_vec()))),
             Variant::StandardWebhooks => SigningKey::StandardWebhooks(
-                signature::standard_webhooks_key(secret).ok_or(if former {
-                    "secrets: `signing-secret` is not a standard-webhooks secret (base64, optionally `whsec_`-prefixed)"
-                } else {
+                signature::standard_webhooks_key(secret).ok_or(
                     "secrets: `signing_secret` is not a standard-webhooks secret (base64, optionally `whsec_`-prefixed)"
-                })?,
+                )?,
             ),
         };
         let subject = settings.subject();
@@ -535,8 +511,8 @@ impl VerifyPlugin for WebhookSignature {
         )
     }
 
-    fn open(settings: &[u8], secrets: &[&[u8]]) -> Result<Self, &'static str> {
-        WebhookSignature::new(settings, secrets)
+    fn open_refusing(settings: &[u8], secrets: &[&[u8]]) -> Result<Self, Refusal> {
+        WebhookSignature::new(settings, secrets).map_err(Refusal::failed)
     }
 
     fn validate(settings: &[u8]) -> Result<(), Refusal> {
@@ -564,12 +540,6 @@ impl VerifyPlugin for WebhookSignature {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = std::sync::Arc::new(keyed);
         Ok(0)
-    }
-
-    /// Compatibility callback for older Rust callers that cannot receive a refusal. The shared
-    /// lifecycle calls `reload`, whose failure is visible to the host.
-    fn refresh(&self, settings: &[u8], secrets: &[&[u8]]) -> u64 {
-        self.reload(settings, secrets).unwrap_or(0)
     }
 
     fn verify(&self, request: &VerifyView<'_>) -> Answer {
@@ -611,7 +581,7 @@ const CARRIERS: &[MarkWord] = &[
 /// credential. Called at `HeadBody`: the signatures cover the body.
 const TAIL: &AuthTail = &verify_tail(0, AuthPoints::HEAD_BODY);
 
-const SECRET_REFS: &[AbiStr] = &[abi_str(SECRET_REF), abi_str(SECRET_REF_FORMER)];
+const SECRET_REFS: &[AbiStr] = &[abi_str(SECRET_REF)];
 
 /// How many `verify` calls the host may have in flight on one instance (the Statement's
 /// `max_inflight`); each is a pure computation over the request.
@@ -620,7 +590,7 @@ const MAX_INFLIGHT: u32 = 1024;
 /// JSON Schema for the lifecycle settings document, embedded in the signed Statement.
 const SETTINGS_SCHEMA: &[u8] = include_bytes!("../settings.schema.json");
 
-/// THE STATEMENT: the plugin's name, version, its secret references (`signing_secret` and its former name `signing-secret`), its carriers and its auth tail.
+/// THE STATEMENT: the plugin's name, version, its `signing_secret` reference, its carriers and its auth tail.
 pub const STATEMENT: Statement = with_tail(
     Statement {
         settings_schema: busbar_contract::abi::mechanism::call::Blob::json(SETTINGS_SCHEMA),
