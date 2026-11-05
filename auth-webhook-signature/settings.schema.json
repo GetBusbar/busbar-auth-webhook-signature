@@ -29,7 +29,8 @@
       ],
       "minimum": 0,
       "maximum": 18446744073709551615,
-      "description": "Standard Webhooks only; null/absent selects 300 seconds. Zero is accepted."
+      "description": "Standard Webhooks only; null/absent selects 300 seconds. Zero is accepted.",
+      "x-busbar-integer-token": "unsigned"
     },
     "subject": {
       "type": [
@@ -80,5 +81,6 @@
         }
       }
     }
-  ]
+  ],
+  "x-busbar-settings-profile": "integer-token-v1"
 }
