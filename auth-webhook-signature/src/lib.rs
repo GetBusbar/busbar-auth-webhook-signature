@@ -320,14 +320,15 @@ impl Keyed {
             .enumerate()
             .filter(|(_, s)| !s.is_empty())
             .collect();
-        let (former, secret) =
-            match set.as_slice() {
-                [(at, one)] => (*at == 1, *one),
-                [] => return Err("secrets: `signing_secret` is not set"),
-                _ => return Err(
+        let (former, secret) = match set.as_slice() {
+            [(at, one)] => (*at == 1, *one),
+            [] => return Err("secrets: `signing_secret` is not set"),
+            _ => {
+                return Err(
                     "secrets: set `signing_secret` or its former name `signing-secret`, not both",
-                ),
-            };
+                );
+            }
+        };
         if std::str::from_utf8(secret).is_err() {
             return Err(if former {
                 "secrets: `signing-secret` is not UTF-8"
@@ -616,9 +617,13 @@ const SECRET_REFS: &[AbiStr] = &[abi_str(SECRET_REF), abi_str(SECRET_REF_FORMER)
 /// `max_inflight`); each is a pure computation over the request.
 const MAX_INFLIGHT: u32 = 1024;
 
+/// JSON Schema for the lifecycle settings document, embedded in the signed Statement.
+const SETTINGS_SCHEMA: &[u8] = include_bytes!("../settings.schema.json");
+
 /// THE STATEMENT: the plugin's name, version, its secret references (`signing_secret` and its former name `signing-secret`), its carriers and its auth tail.
 pub const STATEMENT: Statement = with_tail(
     Statement {
+        settings_schema: busbar_contract::abi::mechanism::call::Blob::json(SETTINGS_SCHEMA),
         secret_refs: SECRET_REFS.as_ptr(),
         secret_refs_len: SECRET_REFS.len(),
         mark_words: CARRIERS.as_ptr(),
@@ -647,3 +652,7 @@ pub mod compiled_in {
 #[cfg(test)]
 #[path = "tests/instance_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "settings_schema_tests.rs"]
+mod settings_schema_tests;

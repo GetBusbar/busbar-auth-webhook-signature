@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Webhook signature settings",
+  "description": "Lifecycle settings parsed as Settings. signing_secret (and its signing-secret alias) are resolved via the Statement secret_refs and lent separately, never accepted in this object.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "variant"
+  ],
+  "properties": {
+    "variant": {
+      "type": "string",
+      "enum": [
+        "twilio",
+        "standard-webhooks"
+      ]
+    },
+    "origin": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Twilio sender scheme://authority, without path, query, fragment, ASCII whitespace or controls. A bracketed host must be non-empty; an explicit port must be non-empty decimal digits."
+    },
+    "tolerance_secs": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 18446744073709551615,
+      "description": "Standard Webhooks only; null/absent selects 300 seconds. Zero is accepted."
+    },
+    "subject": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Defaults to webhook-signature:<variant> when absent or null. An empty string is refused; whitespace is retained."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "variant": {
+            "const": "twilio"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "origin"
+        ],
+        "properties": {
+          "origin": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9+.-]+://(?=[^/?#\\x00-\\x20\\x7F]*(?![\\s\\S]))(?:[^/?#\\x00-\\x20\\x7F]*@)?(?:\\[[^\\]]+\\](?::[0-9]+)?|(?!\\[)[^:@/?#\\x00-\\x20\\x7F]+(?::[0-9]+)?)(?![\\s\\S])"
+          },
+          "tolerance_secs": {
+            "type": "null"
+          },
+          "subject": {
+            "default": "webhook-signature:twilio"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "origin": {
+            "type": "null"
+          },
+          "tolerance_secs": {
+            "default": 300
+          },
+          "subject": {
+            "default": "webhook-signature:standard-webhooks"
+          }
+        }
+      }
+    }
+  ]
+}
