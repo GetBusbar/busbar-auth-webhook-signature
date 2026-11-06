@@ -39,21 +39,9 @@ pub(crate) fn origin_with_default_port_toggled(origin: &str) -> Option<String> {
     }
 }
 
-/// The string a `twilio` signature is computed over: `url`, then each parameter's name and value,
-/// as Twilio's reference validators build it — the DISTINCT names sorted, and under each name its
-/// DISTINCT values sorted (a repeated identical `name=value` pair is signed once).
-#[must_use]
-pub fn twilio_signed_string(url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
-    let mut out = url.to_vec();
-    for (name, value) in twilio_pairs(params) {
-        out.extend_from_slice(name);
-        out.extend_from_slice(value);
-    }
-    out
-}
-
-/// The parameters in the order [`twilio_signed_string`] signs them: sorted by name then value, a
-/// repeated identical pair once.
+/// The parameters in the order a `twilio` signature signs them, as Twilio's reference validators
+/// build it: the DISTINCT names sorted, and under each name its DISTINCT values sorted (a repeated
+/// identical `name=value` pair is signed once).
 fn twilio_pairs(params: &[(Vec<u8>, Vec<u8>)]) -> Vec<(&[u8], &[u8])> {
     let mut pairs: Vec<(&[u8], &[u8])> = params
         .iter()
@@ -62,19 +50,6 @@ fn twilio_pairs(params: &[(Vec<u8>, Vec<u8>)]) -> Vec<(&[u8], &[u8])> {
     pairs.sort_unstable();
     pairs.dedup();
     pairs
-}
-
-/// Whether `presented` (the header value, base64) is the `twilio` signature of `url` and `params`
-/// under `secret`. A value that is not base64 is simply not the signature.
-#[must_use]
-pub fn twilio_verify(
-    secret: &[u8],
-    url: &[u8],
-    params: &[(Vec<u8>, Vec<u8>)],
-    presented: &[u8],
-) -> bool {
-    let secret = Cred::captured(Zeroizing::new(secret.to_vec()));
-    twilio_verify_cred(&secret, url, params, presented)
 }
 
 fn twilio_parts<'a>(url: &'a [u8], params: &'a [(Vec<u8>, Vec<u8>)]) -> Vec<&'a [u8]> {
@@ -86,16 +61,6 @@ fn twilio_parts<'a>(url: &'a [u8], params: &'a [(Vec<u8>, Vec<u8>)]) -> Vec<&'a 
         parts.push(value);
     }
     parts
-}
-
-/// The real provider retains its credential once; verification never exposes or recopies it.
-pub(crate) fn twilio_verify_cred(
-    key: &Cred,
-    url: &[u8],
-    params: &[(Vec<u8>, Vec<u8>)],
-    presented: &[u8],
-) -> bool {
-    twilio_verify_either_cred(key, url, None, params, presented)
 }
 
 /// Judge both accepted URL spellings with one decode and one parameter ordering. Both MACs are
@@ -154,12 +119,12 @@ pub enum FormRefusal {
     TooManyPairs,
 }
 
-/// [`twilio_verify_either_cred`] over a form `body`'s parameters, with the pair order and decoding
-/// of [`form_params`] and [`twilio_signed_string`], but without owned buffers per pair: the body's
+/// [`twilio_verify_either_cred`] over a form `body`'s parameters, with the pair order of
+/// [`twilio_pairs`] over the percent-decoded (`+` is a space) pairs, but without owned buffers per pair: the body's
 /// pairs are counted first, and one over [`MAX_FORM_PAIRS`] is refused before anything is
 /// allocated; under the cap the judgment costs one borrowed slice per pair and one decoded copy of
-/// the parameters. `Err` = refused before the signature is judged (a malformed escape, as
-/// [`form_params`] refuses, or too many pairs).
+/// the parameters. `Err` = refused before the signature is judged (a malformed escape: `%` not
+/// followed by two hex digits, or too many pairs).
 pub(crate) fn twilio_form_verify_either_cred(
     key: &Cred,
     url: &[u8],
@@ -254,23 +219,6 @@ fn hex_byte(hex: &[u8]) -> Option<u8> {
     let hi = char::from(hex[0]).to_digit(16)?;
     let lo = char::from(hex[1]).to_digit(16)?;
     u8::try_from(hi * 16 + lo).ok()
-}
-
-/// An `application/x-www-form-urlencoded` body as Twilio signs it: each `name=value` pair
-/// percent-decoded (`+` is a space). `None` = not a form body (a malformed escape).
-#[must_use]
-pub fn form_params(body: &[u8]) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-    body.split(|b| *b == b'&')
-        .filter(|pair| !pair.is_empty())
-        .map(|pair| {
-            let (name, value) = form_pair(pair);
-            Some((form_decode(name)?, form_decode(value)?))
-        })
-        .collect()
-}
-
-fn form_decode(s: &[u8]) -> Option<Vec<u8>> {
-    form_bytes(s).collect()
 }
 
 /// One form component decoded a byte at a time (`+` is a space, `%XY` one byte); a `None` item is

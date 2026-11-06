@@ -1,6 +1,9 @@
 //! Checks both variants against published vectors and invalid-signature cases.
 
-use super::signing::{standard_webhooks_sign, twilio_expected, twilio_sign};
+use super::signing::{
+    form_params, standard_webhooks_sign, twilio_expected, twilio_sign, twilio_signed_string,
+    twilio_verify, twilio_verify_cred,
+};
 use super::*;
 
 fn owned(params: &[(&str, &str)]) -> Vec<(Vec<u8>, Vec<u8>)> {

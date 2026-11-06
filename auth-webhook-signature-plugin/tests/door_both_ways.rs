@@ -12,7 +12,6 @@ use std::mem::zeroed;
 use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
-use busbar_auth_webhook_signature::signature::twilio_signed_string;
 use busbar_contract::abi::auth::{
     slot, IdentifyOut, IdentityBuf, NamedValue, RequestFacts, StripName, VerifyIn,
     DECISION_CONTINUE, DECISION_STOP, POINT_HEAD_BODY, SPAN_ABSENT, STRIP_FIELD, VERDICT_IDENTITY,
@@ -291,6 +290,20 @@ fn verify(p: &Plugin<Auth>, path: &str, query: Option<&str>, signature: Option<&
     verify_req(p, "GET", path, query, None, 0, &headers)
 }
 
+/// The string a Twilio signature covers: `url`, then each distinct `name=value` pair's name and value,
+/// sorted by name then value (Twilio's reference validators).
+fn twilio_signed_string(url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
+    let mut pairs: Vec<&(Vec<u8>, Vec<u8>)> = params.iter().collect();
+    pairs.sort_unstable();
+    pairs.dedup();
+    let mut out = url.to_vec();
+    for (name, value) in pairs {
+        out.extend_from_slice(name);
+        out.extend_from_slice(value);
+    }
+    out
+}
+
 /// A Twilio signature of `url` and `params` under `secret`, as a sender computes it.
 fn twilio_sign(secret: &[u8], url: &[u8], params: &[(Vec<u8>, Vec<u8>)]) -> String {
     let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, secret);
@@ -411,7 +424,7 @@ fn standard_script(p: &Plugin<Auth>) -> Vec<String> {
 const STANDARD_EXPECTED: &[&str] = &[
     "open Ready",
     "valid Ready identity webhook-signature:standard-webhooks \
-     replay=standard-webhooks/msg_p5jXN8AQM9LWM0D4loKWxJek/301s",
+     replay=standard-webhooks/1614265330/msg_p5jXN8AQM9LWM0D4loKWxJek/301s",
     "bad-signature Ready reject",
     "stale Ready reject",
     "missing-headers Ready pass",
@@ -632,7 +645,7 @@ fn a_short_standard_webhook_keeps_its_judgment_across_rotation_and_elapsed_time(
     const BODY: &[u8] = br#"{"test": 2432232314}"#;
     const SIGNATURE: &str = "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=";
     const SUBJECT: &str = "webhook-signature:standard-webhooks";
-    const REPLAY_KEY: &str = "standard-webhooks/msg_p5jXN8AQM9LWM0D4loKWxJek";
+    const REPLAY_KEY: &str = "standard-webhooks/1614265330/msg_p5jXN8AQM9LWM0D4loKWxJek";
     const REFRESH_GENERATION: u64 = 2;
     const RESTORE_GENERATION: u64 = 3;
 

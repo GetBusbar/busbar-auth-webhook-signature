@@ -67,14 +67,23 @@ An instance names and strips only its own variant's header lines.
 
 ### Replay
 
-A verified `standard-webhooks` identity carries a replay key (`standard-webhooks/<webhook-id>`; a webhook-id that is not UTF-8 is keyed `standard-webhooks-raw/<lower-case hex>`) with
-the rest of the tolerance window as its TTL; the kernel refuses the same webhook id again inside the
-window. A `twilio` identity carries none: its signature has no nonce or timestamp to key on.
-Non-UTF-8 Standard Webhooks ids use `standard-webhooks-raw/<hex bytes>` so distinct byte ids
-cannot collapse into one replay key through lossy text conversion. The kernel stores each claim
-under the configured provider name (`<provider>/<key>`), so two differently configured instances
-never share a claim; one provider named in both the data-plane and admin chains, or on several
-nodes sharing one store, is one sender and one secret and shares its claims on purpose.
+A verified `standard-webhooks` identity carries a replay key naming the attempt: its
+`webhook-timestamp` and its `webhook-id`, `standard-webhooks/<webhook-timestamp>/<webhook-id>` (the
+timestamp as its decimal value; a webhook-id that is not UTF-8 is keyed
+`standard-webhooks-raw/<webhook-timestamp>/<lower-case hex>`, so distinct byte ids cannot collapse
+into one key through lossy text conversion). Its TTL is the rest of the tolerance window in which
+that timestamp is acceptable, plus one second. The kernel refuses the same key again inside the
+window, so a byte-identical replay of an admitted request is refused, and after the window it is
+stale anyway. The key is not the webhook-id alone: per the Standard Webhooks spec a sender's retry
+keeps the webhook-id but carries a new `webhook-timestamp` and a new signature, so a legitimate
+retry inside the tolerance window is a new attempt and is accepted. A receiver that must process
+each event once deduplicates on the webhook-id itself, as the spec's idempotency guidance says. A
+`twilio` identity carries none: its signature has no nonce or timestamp to key on.
+
+The kernel stores each claim under the configured provider name (the `identity-providers:` key,
+`<provider>/<key>`), so two differently configured instances never share a claim; one provider
+named in both the data-plane and admin chains, or on several nodes sharing one store, is one sender
+and one secret and shares its claims on purpose.
 
 ## Build
 

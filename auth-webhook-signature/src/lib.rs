@@ -3,8 +3,8 @@
 
 //! # busbar-auth-webhook-signature — an inbound request signed by its sender, one auth-kind plugin
 //! A Twilio GET or HEAD signs the URL alone. Verified Standard Webhooks replay keys use
-//! `standard-webhooks/<webhook-id>` for UTF-8 ids and `standard-webhooks-raw/<lower-case hex>`
-//! for ids that are not UTF-8.
+//! `standard-webhooks/<webhook-timestamp>/<webhook-id>` for UTF-8 ids and
+//! `standard-webhooks-raw/<webhook-timestamp>/<lower-case hex>` for ids that are not UTF-8.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -104,8 +104,16 @@ pub struct Settings {
 impl Settings {
     /// Parse and check a settings document.
     pub fn parse(settings: &[u8]) -> Result<Self, &'static str> {
-        let s: Settings =
-            serde_json::from_slice(settings).map_err(|e| decode_refusal(settings, &e))?;
+        // A derived struct also decodes from a JSON array, positionally; the document is an object.
+        if !is_json_object(settings) {
+            return Err(
+                match serde_json::from_slice::<serde::de::IgnoredAny>(settings) {
+                    Ok(_) => "settings: must be a JSON object",
+                    Err(e) => decode_refusal(&e),
+                },
+            );
+        }
+        let s: Settings = serde_json::from_slice(settings).map_err(|e| decode_refusal(&e))?;
         match s.variant {
             Variant::Twilio => {
                 let Some(origin) = &s.origin else {
@@ -142,23 +150,23 @@ impl Settings {
 /// A settings decode error as a refusal line. The decoder's text is read only to tell the cases
 /// apart and is never returned: a data error quotes the offending value. An unknown key cannot be
 /// named in a `&'static str` (the constructor answers one), so the line lists the keys.
-fn decode_refusal(settings: &[u8], e: &serde_json::Error) -> &'static str {
+fn decode_refusal(e: &serde_json::Error) -> &'static str {
     use serde_json::error::Category;
     match e.classify() {
+        // serde_json reports a number beyond any representation as a syntax error.
+        Category::Syntax if e.to_string().starts_with("number out of range") => {
+            "settings: a number is out of range"
+        }
         Category::Syntax | Category::Eof | Category::Io => "settings: not well-formed JSON",
         Category::Data => {
             let text = e.to_string();
-            if settings.trim_ascii_start().first() != Some(&b'{') {
-                "settings: must be a JSON object"
-            } else if text.starts_with("missing field `variant`") {
+            if text.starts_with("missing field `variant`") {
                 "settings.variant: required, `twilio` or `standard-webhooks`"
             } else if text.starts_with("unknown variant") {
                 "settings.variant: must be `twilio` or `standard-webhooks`"
             } else if text.starts_with("duplicate field") {
                 "settings: a key is set twice"
-            } else if text.starts_with("number out of range")
-                || text.starts_with("invalid value: integer")
-            {
+            } else if text.starts_with("invalid value: integer") {
                 "settings.tolerance_secs: out of range, a count of seconds from 0"
             } else if text.starts_with("unknown field") {
                 "settings: an unknown key is set; the keys are `variant`, `origin`, `tolerance_secs` and `subject`"
@@ -167,6 +175,14 @@ fn decode_refusal(settings: &[u8], e: &serde_json::Error) -> &'static str {
             }
         }
     }
+}
+
+/// Whether the document's first token (after JSON whitespace) opens an object.
+fn is_json_object(settings: &[u8]) -> bool {
+    settings
+        .iter()
+        .find(|b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+        == Some(&b'{')
 }
 
 /// `scheme://authority`, nothing after the authority.
@@ -375,9 +391,13 @@ impl Keyed {
     }
 
     /// Standard Webhooks: the signature over `id.timestamp.body` within the tolerance. A verified
-    /// message asks the kernel to admit its `webhook-id` ONCE for the rest of the window in which its
-    /// timestamp is acceptable (`timestamp + tolerance - now`, plus a second), so a replay of the
-    /// same signed message inside the window is refused, and one after it is stale anyway.
+    /// attempt asks the kernel to admit its (`webhook-timestamp`, `webhook-id`) pair ONCE for the
+    /// rest of the window in which that timestamp is acceptable (`timestamp + tolerance - now`, plus
+    /// a second), so a byte-identical replay inside the window is refused, and one after it is stale
+    /// anyway. The key is the pair, not the id alone: a sender's retry keeps the id but carries a new
+    /// timestamp and signature (Standard Webhooks spec), so it is a new attempt and is admitted. The
+    /// timestamp is the parsed decimal value and leads the key: digits only, so the first `/` after
+    /// it ends it, and no id can make two attempts one key.
     fn standard_webhooks(
         &self,
         r: &Request<'_>,
@@ -407,10 +427,10 @@ impl Keyed {
             .saturating_add(1);
 
         let key = match std::str::from_utf8(id) {
-            Ok(id) => format!("standard-webhooks/{id}"),
+            Ok(id) => format!("standard-webhooks/{ts}/{id}"),
             Err(_) => {
                 use std::fmt::Write as _;
-                let mut key = String::from("standard-webhooks-raw/");
+                let mut key = format!("standard-webhooks-raw/{ts}/");
                 for b in id {
                     let _ = write!(key, "{b:02x}");
                 }
@@ -622,6 +642,14 @@ pub mod compiled_in {
 #[cfg(test)]
 #[path = "tests/instance_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/audit_tests.rs"]
+mod audit_tests;
+
+#[cfg(test)]
+#[path = "tests/replay_key_tests.rs"]
+mod replay_key_tests;
 
 #[cfg(test)]
 #[path = "settings_schema_tests.rs"]

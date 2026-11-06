@@ -250,16 +250,17 @@ fn the_standard_webhooks_published_vector_identifies_the_sender() {
     assert_eq!(id.provider.as_deref(), Some("webhook-signature"));
 }
 
-/// The replay key the kernel claims: the message id, for the rest of the window in which its
-/// timestamp is acceptable. A later delivery of the same message gets a shorter claim, and one at
-/// the window's edge a one-second claim; after the window the message is stale anyway.
+/// The replay key the kernel claims: the attempt's timestamp and message id, for the rest of the
+/// window in which its timestamp is acceptable. A later delivery of the same attempt gets a
+/// shorter claim, and one at the window's edge a one-second claim; after the window the attempt is
+/// stale anyway.
 #[test]
-fn a_verified_delivery_asks_the_kernel_to_admit_its_webhook_id_once_for_the_window() {
+fn a_verified_delivery_asks_the_kernel_to_admit_its_attempt_once_for_the_window() {
     let replay = |now: u64| match delivery(ALL, Some(SW_BODY), now) {
         Verdict::Identity(id) => id.replay.map(|r| (r.key, r.ttl_secs)),
         other => panic!("{other:?}"),
     };
-    let key = "standard-webhooks/msg_p5jXN8AQM9LWM0D4loKWxJek".to_string();
+    let key = "standard-webhooks/1614265330/msg_p5jXN8AQM9LWM0D4loKWxJek".to_string();
     assert_eq!(replay(SW_NOW), Some((key.clone(), 301)));
     assert_eq!(replay(SW_NOW - 300), Some((key.clone(), 601)));
     assert_eq!(replay(SW_NOW + 300), Some((key, 1)));
@@ -285,7 +286,7 @@ fn distinct_non_utf8_webhook_ids_get_distinct_replay_keys() {
     let ff = replay_key(b"evt-\xff");
     let fe = replay_key(b"evt-\xfe");
     assert_ne!(ff, fe);
-    assert_eq!(ff, "standard-webhooks-raw/6576742dff");
+    assert_eq!(ff, "standard-webhooks-raw/1614265330/6576742dff");
 }
 
 /// A tolerance near `u64::MAX` at `now == 0` saturates the replay window instead of overflowing it.
@@ -317,7 +318,7 @@ fn the_replay_ttl_follows_the_configured_tolerance() {
     assert_eq!(
         id.replay.map(|r| (r.key, r.ttl_secs)),
         Some((
-            "standard-webhooks/msg_p5jXN8AQM9LWM0D4loKWxJek".to_string(),
+            "standard-webhooks/1614265330/msg_p5jXN8AQM9LWM0D4loKWxJek".to_string(),
             300
         ))
     );
