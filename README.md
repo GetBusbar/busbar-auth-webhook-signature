@@ -7,7 +7,6 @@ First-party signed kind:auth plugin cdylib: the webhook-signature auth module, p
 |---|---|---|---|---|
 | `auth` | `webhook-signature` | `busbar-auth-webhook-signature-plugin` | 1.6.0 (pinned in `.busbar-ref`) | Apache-2.0 |
 
-[![ci](https://github.com/GetBusbar/busbar-auth-webhook-signature/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/GetBusbar/busbar-auth-webhook-signature/actions/workflows/ci.yml)
 <!-- fleet:header:end -->
 
 ## What it is for
