@@ -434,7 +434,10 @@ const STANDARD_EXPECTED: &[&str] = &[
 
 #[test]
 fn compiled_in_and_dropped_in_verify_every_variant_identically() {
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     let linked_t = script(&linked(&folds, &d));
     assert_eq!(linked_t, EXPECTED, "the linked door");
@@ -462,7 +465,10 @@ fn compiled_in_and_dropped_in_verify_every_variant_identically() {
 
 #[test]
 fn red_open_without_a_signing_secret_or_with_foreign_settings_fails() {
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     assert_eq!(open(&linked(&folds, &d), SETTINGS, ""), Outcome::Failed);
     assert_eq!(
@@ -477,7 +483,10 @@ fn red_open_without_a_signing_secret_or_with_foreign_settings_fails() {
 
 #[test]
 fn every_verdict_names_the_signature_lines_and_a_decision() {
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     let p = linked(&folds, &d);
     assert_eq!(open(&p, SETTINGS, TOKEN), Outcome::Ready);
@@ -500,7 +509,10 @@ fn every_verdict_names_the_signature_lines_and_a_decision() {
 
 #[test]
 fn a_standard_webhooks_instance_strips_only_its_own_lines() {
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     const BODY: &[u8] = br#"{"test": 2432232314}"#;
     const SIG: &str = "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=";
@@ -599,7 +611,10 @@ const ROTATION_EXPECTED: &[&str] = &[
 
 #[test]
 fn refresh_picks_up_a_rotated_signing_secret_without_a_reopen() {
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     assert_eq!(
         rotation_script(&linked(&folds, &d)),
@@ -612,7 +627,10 @@ fn refresh_picks_up_a_rotated_signing_secret_without_a_reopen() {
 
 #[test]
 fn an_invalid_signing_secret_refuses_refresh_and_keeps_the_previous_signature() {
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     let signature = twilio_sign(TOKEN.as_bytes(), SIGNED_URL.as_bytes(), &[]);
     for p in [linked(&folds, &d), dropped(&folds, &d)] {
@@ -629,10 +647,10 @@ fn an_invalid_signing_secret_refuses_refresh_and_keeps_the_previous_signature() 
 /// timestamp cannot change the identity, replay window, or strips already judged for this call.
 #[test]
 fn a_short_standard_webhook_keeps_its_judgment_across_rotation_and_elapsed_time() {
-    use busbar_auth_webhook_signature::{
-        DEFAULT_TOLERANCE_SECS, WEBHOOK_ID_HEADER, WEBHOOK_SIGNATURE_HEADER,
-        WEBHOOK_TIMESTAMP_HEADER,
-    };
+    const DEFAULT_TOLERANCE_SECS: u64 = 300;
+    const WEBHOOK_ID_HEADER: &str = "webhook-id";
+    const WEBHOOK_SIGNATURE_HEADER: &str = "webhook-signature";
+    const WEBHOOK_TIMESTAMP_HEADER: &str = "webhook-timestamp";
 
     const SETTINGS: &str = r#"{"variant":"standard-webhooks"}"#;
     const ROTATED_SETTINGS: &str =
@@ -661,7 +679,10 @@ fn a_short_standard_webhook_keeps_its_judgment_across_rotation_and_elapsed_time(
             value: blob(value.as_bytes(), BLOB_OCTETS, BLOB_SECRET),
         })
         .collect();
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     for p in [linked(&folds, &d), dropped(&folds, &d)] {
         assert_eq!(open(&p, SETTINGS, SECRET), Outcome::Ready);
@@ -821,7 +842,10 @@ fn validate_refuses_malformed_settings_before_secrets_are_resolved() {
         ),
     ];
     for leg in [false, true] {
-        let dispatcher = Dispatcher::new(DispatchConfig::default());
+        let dispatcher = Dispatcher::new(
+            DispatchConfig::default(),
+            busbar_contract::services::test_caller_binding(),
+        );
         let folds = Arc::new(Folds::default());
         let plugin = if leg {
             dropped(&folds, &dispatcher)
@@ -856,7 +880,10 @@ fn both_variants_validate_without_a_secret_and_open_after_secret_resolution() {
     ];
     for leg in [false, true] {
         for &(settings, resolved) in cases {
-            let dispatcher = Dispatcher::new(DispatchConfig::default());
+            let dispatcher = Dispatcher::new(
+                DispatchConfig::default(),
+                busbar_contract::services::test_caller_binding(),
+            );
             let folds = Arc::new(Folds::default());
             let plugin = if leg {
                 dropped(&folds, &dispatcher)
@@ -916,7 +943,10 @@ fn close(p: &Plugin<Auth>) -> busbar_plugin_loader::dispatch::Called {
 #[test]
 fn a_changed_statement_is_refused_linked_and_dropped() {
     use busbar_plugin_loader::dispatch::LoadError;
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     let honest = rendering_of(busbar_auth_webhook_signature::door).unwrap();
     let statement = rendering_of(another_version_door).unwrap();
@@ -942,10 +972,13 @@ fn a_changed_statement_is_refused_linked_and_dropped() {
 #[test]
 fn the_door_refuses_every_other_kind_linked_and_dropped() {
     use busbar_plugin_loader::dispatch::kinds::{
-        export::Export, hook::Hook, plane::Plane, secret::Secret, store::Store,
+        export::Export, hook::Hook, plane::Plane, secret::Secret, store_v4::StoreV4 as Store,
         transport::Transport,
     };
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     let row = row(busbar_auth_webhook_signature::door);
     let path = built_plugin_image();
@@ -1058,7 +1091,10 @@ extern "C" fn wrong_abi_door<const UP: bool>() -> &'static Door {
 
 #[test]
 fn another_kind_abi_is_refused() {
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     for door in [wrong_abi_door::<true> as DoorFn, wrong_abi_door::<false>] {
         let host = busbar_auth_webhook_signature::door().kind_abi();
@@ -1151,10 +1187,10 @@ fn vector_verify(
         f.input.strip = std::ptr::null_mut();
         f.input.strip_cap = 0;
     }
-    let before = p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed);
+    let before = p.test_invocations().0;
     let answer_error;
     let mut short_needs = None;
-    let resumes = p.inner.resumes.load(std::sync::atomic::Ordering::Relaxed);
+    let resumes = p.test_invocations().1;
     let outcome = if submitted {
         let ticket = d.mint(0).expect("a free ticket");
         // All pointed-to storage remains alive and unmodified until wait_done returns the frame.
@@ -1219,20 +1255,13 @@ fn vector_verify(
     let expected_crossings = if short { 3 } else { 1 };
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while short
-        && p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed) - before
-            < expected_crossings
+        && p.test_invocations().0 - before < expected_crossings
         && std::time::Instant::now() < deadline
     {
         std::thread::yield_now();
     }
-    assert_eq!(
-        p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed) - before,
-        expected_crossings
-    );
-    assert_eq!(
-        p.inner.resumes.load(std::sync::atomic::Ordering::Relaxed),
-        resumes
-    );
+    assert_eq!(p.test_invocations().0 - before, expected_crossings);
+    assert_eq!(p.test_invocations().1, resumes);
     assert_eq!(outcome, Outcome::Ready);
     let subject = f.out.identity.subject;
     assert_private_text(&bytes);
@@ -1308,7 +1337,10 @@ fn published_twilio_and_standard_vectors_cross_both_doors_on_the_spot_and_submit
         let input: serde_json::Value = serde_json::from_str(inputs).unwrap();
         let settings = input["settings"].as_str().unwrap().as_bytes();
         let auth = &input["auth"];
-        let d = Dispatcher::new(DispatchConfig::default());
+        let d = Dispatcher::new(
+            DispatchConfig::default(),
+            busbar_contract::services::test_caller_binding(),
+        );
         let folds = Arc::new(Folds::default());
         let mut transcripts = Vec::new();
         let mut rotated_transcripts = Vec::new();
@@ -1379,43 +1411,28 @@ fn published_twilio_and_standard_vectors_cross_both_doors_on_the_spot_and_submit
             let mut unopened: Frame<VerifyIn, IdentifyOut> = Frame::new(z(), z());
             unopened.input.head = in_head();
             unopened.out.head = out_head();
-            let before = p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed);
+            let before = p.test_invocations().0;
             assert_ne!(
                 private_answer(p.call(slot::VERIFY, &mut unopened)).outcome,
                 Outcome::Ready
             );
-            assert_eq!(
-                p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed),
-                before
-            );
-            let before = p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed);
+            assert_eq!(p.test_invocations().0, before);
+            let before = p.test_invocations().0;
             assert_eq!(
                 lifecycle_answer("validate", &validate_settings(&p, settings), &mut lifecycle),
                 Outcome::Ready
             );
-            assert_eq!(
-                p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed) - before,
-                1
-            );
+            assert_eq!(p.test_invocations().0 - before, 1);
             assert_eq!(
                 lifecycle_answer("open", &open_resolved(&p, settings), &mut lifecycle),
                 Outcome::Ready
             );
-            assert_eq!(
-                p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed) - before,
-                2
-            );
+            assert_eq!(p.test_invocations().0 - before, 2);
             let ready_crossings = u64::from(p.has_ready());
             p.ready(&d, std::time::Duration::from_secs(5)).unwrap();
-            assert_eq!(
-                p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed) - before,
-                2 + ready_crossings
-            );
+            assert_eq!(p.test_invocations().0 - before, 2 + ready_crossings);
             assert_undeclared_slots(&p);
-            assert_eq!(
-                p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed) - before,
-                7 + ready_crossings
-            );
+            assert_eq!(p.test_invocations().0 - before, 7 + ready_crossings);
             let mut transcript = Vec::new();
             for case in auth["cases"].as_array().unwrap() {
                 let now = vector_verify(&p, &d, case, false, false);
@@ -1449,14 +1466,8 @@ fn published_twilio_and_standard_vectors_cross_both_doors_on_the_spot_and_submit
             } else {
                 linked(&folds, &d)
             };
-            let before = rotated
-                .inner
-                .crossings
-                .load(std::sync::atomic::Ordering::Relaxed);
-            let resumes = rotated
-                .inner
-                .resumes
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let before = rotated.test_invocations().0;
+            let resumes = rotated.test_invocations().1;
             assert_eq!(
                 lifecycle_answer(
                     "open rotated",
@@ -1468,27 +1479,13 @@ fn published_twilio_and_standard_vectors_cross_both_doors_on_the_spot_and_submit
                 ),
                 Outcome::Ready
             );
-            assert_eq!(
-                rotated
-                    .inner
-                    .crossings
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                    - before,
-                1
-            );
-            let before_ready = rotated
-                .inner
-                .crossings
-                .load(std::sync::atomic::Ordering::Relaxed);
+            assert_eq!(rotated.test_invocations().0 - before, 1);
+            let before_ready = rotated.test_invocations().0;
             rotated
                 .ready(&d, std::time::Duration::from_secs(5))
                 .unwrap();
             assert_eq!(
-                rotated
-                    .inner
-                    .crossings
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                    - before_ready,
+                rotated.test_invocations().0 - before_ready,
                 u64::from(rotated.has_ready())
             );
             let mut rotated_answers = Vec::new();
@@ -1505,32 +1502,16 @@ fn published_twilio_and_standard_vectors_cross_both_doors_on_the_spot_and_submit
                     rotated_answers.push(answer);
                 }
             }
-            let before_close = rotated
-                .inner
-                .crossings
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let before_close = rotated.test_invocations().0;
             assert_eq!(
                 lifecycle_answer("close rotated", &close(&rotated), &mut lifecycle),
                 Outcome::Ready
             );
-            assert_eq!(
-                rotated
-                    .inner
-                    .crossings
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                    - before_close,
-                1
-            );
-            assert_eq!(
-                rotated
-                    .inner
-                    .resumes
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                resumes
-            );
+            assert_eq!(rotated.test_invocations().0 - before_close, 1);
+            assert_eq!(rotated.test_invocations().1, resumes);
             rotated_transcripts.push(rotated_answers);
             let (settings_bytes, secret) = split_settings(settings);
-            let before_refresh = p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed);
+            let before_refresh = p.test_invocations().0;
             assert_eq!(
                 lifecycle_answer(
                     "refresh",
@@ -1544,10 +1525,7 @@ fn published_twilio_and_standard_vectors_cross_both_doors_on_the_spot_and_submit
                 ),
                 Outcome::Ready
             );
-            assert_eq!(
-                p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed) - before_refresh,
-                1
-            );
+            assert_eq!(p.test_invocations().0 - before_refresh, 1);
             assert_eq!(
                 vector_verify(&p, &d, &auth["cases"][0], false, false),
                 transcript[0]
@@ -1563,24 +1541,18 @@ fn published_twilio_and_standard_vectors_cross_both_doors_on_the_spot_and_submit
                 answer.lease != 0,
                 tick.out.next_tick_ns,
             ));
-            let before_close = p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed);
+            let before_close = p.test_invocations().0;
             assert_eq!(
                 lifecycle_answer("close", &close(&p), &mut lifecycle),
                 Outcome::Ready
             );
-            assert_eq!(
-                p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed) - before_close,
-                1
-            );
-            let before = p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed);
+            assert_eq!(p.test_invocations().0 - before_close, 1);
+            let before = p.test_invocations().0;
             assert_ne!(
                 private_answer(p.call(slot::VERIFY, &mut unopened)).outcome,
                 Outcome::Ready
             );
-            assert_eq!(
-                p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed),
-                before
-            );
+            assert_eq!(p.test_invocations().0, before);
             transcripts.push(transcript);
             for (bad_index, settings) in auth["bad_settings"].as_array().unwrap().iter().enumerate()
             {
@@ -1589,8 +1561,8 @@ fn published_twilio_and_standard_vectors_cross_both_doors_on_the_spot_and_submit
                 } else {
                     linked(&folds, &d)
                 };
-                let before = p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed);
-                let resumes = p.inner.resumes.load(std::sync::atomic::Ordering::Relaxed);
+                let before = p.test_invocations().0;
+                let resumes = p.test_invocations().1;
                 let validated = validate_settings(&p, settings.as_str().unwrap().as_bytes());
                 // Secret syntax belongs to OPEN; settings-only VALIDATE accepts this case.
                 let secret_only =
@@ -1617,23 +1589,11 @@ fn published_twilio_and_standard_vectors_cross_both_doors_on_the_spot_and_submit
                         .as_ref()
                         .is_some_and(|text| !text.is_empty()));
                 }
-                assert_eq!(
-                    p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed) - before,
-                    1
-                );
-                assert_eq!(
-                    p.inner.resumes.load(std::sync::atomic::Ordering::Relaxed),
-                    resumes
-                );
+                assert_eq!(p.test_invocations().0 - before, 1);
+                assert_eq!(p.test_invocations().1, resumes);
                 let refused = open_resolved(&p, settings.as_str().unwrap().as_bytes());
-                assert_eq!(
-                    p.inner.crossings.load(std::sync::atomic::Ordering::Relaxed) - before,
-                    2
-                );
-                assert_eq!(
-                    p.inner.resumes.load(std::sync::atomic::Ordering::Relaxed),
-                    resumes
-                );
+                assert_eq!(p.test_invocations().0 - before, 2);
+                assert_eq!(p.test_invocations().1, resumes);
                 assert!(refused.recall.is_none());
                 assert_eq!(refused.outcome, Outcome::Failed);
                 assert!(refused.error.as_ref().is_some_and(|text| !text.is_empty()));
@@ -1711,7 +1671,10 @@ extern "C" fn wrong_layout_door<const ZERO: bool>() -> &'static Door {
 }
 #[test]
 fn another_kind_layout_is_refused() {
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     for door in [
         wrong_layout_door::<true> as DoorFn,
@@ -1771,7 +1734,10 @@ extern "C" fn failing_ready_door() -> &'static Door {
 }
 #[test]
 fn a_failing_ready_is_refused_once() {
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     let p = load_linked::<Auth>(&row(failing_ready_door), bind(&folds, &d)).unwrap();
     assert_eq!(open(&p, SETTINGS, TOKEN), Outcome::Ready);
@@ -1803,7 +1769,10 @@ extern "C" fn another_version_door() -> &'static Door {
 }
 #[test]
 fn a_restated_version_does_not_match_the_honest_row() {
-    let d = Dispatcher::new(DispatchConfig::default());
+    let d = Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    );
     let folds = Arc::new(Folds::default());
     let row = LinkedRow {
         statement: rendering_of(busbar_auth_webhook_signature::door).unwrap(),
@@ -1817,12 +1786,11 @@ fn a_restated_version_does_not_match_the_honest_row() {
 
 // Each header operation is synchronous: exactly one entry, with no resumed invocation.
 fn one_header_crossing<T>(p: &Plugin<Auth>, call: impl FnOnce() -> T) -> T {
-    use std::sync::atomic::Ordering;
-    let before = p.inner.crossings.load(Ordering::Relaxed);
-    let resumes = p.inner.resumes.load(Ordering::Relaxed);
+    let before = p.test_invocations().0;
+    let resumes = p.test_invocations().1;
     let result = call();
-    assert_eq!(p.inner.crossings.load(Ordering::Relaxed) - before, 1);
-    assert_eq!(p.inner.resumes.load(Ordering::Relaxed) - resumes, 0);
+    assert_eq!(p.test_invocations().0 - before, 1);
+    assert_eq!(p.test_invocations().1 - resumes, 0);
     result
 }
 

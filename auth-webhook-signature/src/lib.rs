@@ -9,7 +9,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-pub mod signature;
+pub(crate) mod signature;
 
 use busbar_contract::abi::auth::{AuthPoints, AuthTail};
 use busbar_contract::abi::mechanism::call::AbiStr;
@@ -25,29 +25,29 @@ use busbar_contract::auth_calls::Replay;
 use serde::Deserialize;
 
 /// The scheme alternative a claim names to be authenticated by this plugin.
-pub const SCHEME_ALTERNATIVE: &str = "webhook-signature";
+pub(crate) const SCHEME_ALTERNATIVE: &str = "webhook-signature";
 
 /// The Statement's secret reference: the shared signing secret (for `twilio`, the account's auth
 /// token; for `standard-webhooks`, the `whsec_` secret), resolved by the secret kind. Snake case,
 /// as every other auth plugin's settings keys are.
-pub const SECRET_REF: &str = "signing_secret";
+pub(crate) const SECRET_REF: &str = "signing_secret";
 
 /// The header a `twilio` signature is presented in (matched ASCII case-insensitively).
-pub const TWILIO_SIGNATURE_HEADER: &str = "x-twilio-signature";
+pub(crate) const TWILIO_SIGNATURE_HEADER: &str = "x-twilio-signature";
 /// The Standard Webhooks message id header.
-pub const WEBHOOK_ID_HEADER: &str = "webhook-id";
+pub(crate) const WEBHOOK_ID_HEADER: &str = "webhook-id";
 /// The Standard Webhooks timestamp header (seconds since the epoch).
-pub const WEBHOOK_TIMESTAMP_HEADER: &str = "webhook-timestamp";
+pub(crate) const WEBHOOK_TIMESTAMP_HEADER: &str = "webhook-timestamp";
 /// The Standard Webhooks signature-list header.
-pub const WEBHOOK_SIGNATURE_HEADER: &str = "webhook-signature";
+pub(crate) const WEBHOOK_SIGNATURE_HEADER: &str = "webhook-signature";
 
 /// The Standard Webhooks default tolerance, either direction: five minutes.
-pub const DEFAULT_TOLERANCE_SECS: u64 = 300;
+pub(crate) const DEFAULT_TOLERANCE_SECS: u64 = 300;
 
 /// Which sender's algorithm a configured instance checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum Variant {
+pub(crate) enum Variant {
     /// Twilio: HMAC-SHA1 over the full URL plus the sorted POST form parameters, base64, in
     /// `X-Twilio-Signature`.
     Twilio,
@@ -80,7 +80,7 @@ impl Variant {
 /// The settings document, one JSON object.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Settings {
+pub(crate) struct Settings {
     /// The sender's algorithm.
     pub variant: Variant,
     /// `twilio` only, and required there: the scheme and authority the SENDER requested — exactly
@@ -223,7 +223,7 @@ fn authority_has_valid_port(authority: &str) -> bool {
 
 /// One request, as much of it as a signature reads.
 #[derive(Clone, Copy)]
-pub struct Request<'a> {
+pub(crate) struct Request<'a> {
     /// The method.
     pub method: &'a [u8],
     /// The path, raw as received.
@@ -257,7 +257,7 @@ impl<'a> Request<'a> {
 /// set them. A `refresh` carrying a ROTATED secret (or new settings) swaps them in place, so the new
 /// secret verifies and the old one is refused without a re-open; a request already judging keeps
 /// the pair it started with.
-pub struct WebhookSignature {
+pub(crate) struct WebhookSignature {
     current: std::sync::RwLock<std::sync::Arc<Keyed>>,
 }
 
@@ -292,6 +292,7 @@ impl WebhookSignature {
 
     /// Judge one request.
     #[must_use]
+    #[cfg(test)]
     pub fn judge(&self, r: &Request<'_>) -> Verdict {
         self.current().judge(r)
     }
@@ -611,7 +612,7 @@ const MAX_INFLIGHT: u32 = 1024;
 const SETTINGS_SCHEMA: &[u8] = include_bytes!("../settings.schema.json");
 
 /// THE STATEMENT: the plugin's name, version, its `signing_secret` reference, its carriers and its auth tail.
-pub const STATEMENT: Statement = with_tail(
+pub(crate) const STATEMENT: Statement = with_tail(
     Statement {
         settings_schema: busbar_contract::abi::mechanism::call::Blob::json(SETTINGS_SCHEMA),
         secret_refs: SECRET_REFS.as_ptr(),
@@ -635,7 +636,7 @@ busbar_contract::auth_verify_door!(WebhookSignature, STATEMENT);
 pub mod compiled_in {
     /// The door and its `MACRO_DOOR` (the `plugin_door!` door a linked table names).
     pub mod door {
-        pub use crate::{door, MACRO_DOOR};
+        pub use super::super::{door, MACRO_DOOR};
     }
 }
 

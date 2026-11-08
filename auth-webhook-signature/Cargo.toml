@@ -33,3 +33,4 @@ jsonschema = { workspace = true }
 # Independent Twilio reference signer used by the existing wire vectors.
 ring = { workspace = true }
 tracing-subscriber = { workspace = true }
+busbar-contract = { workspace = true, features = ["test-seal"] }

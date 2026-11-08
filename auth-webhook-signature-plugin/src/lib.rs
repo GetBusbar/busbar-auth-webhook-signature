@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The `webhook-signature` auth as a droppable busbar plugin: the `cdylib` a signed tarball carries
-//! (`kind: auth`, key `webhook-signature`). The logic crate is re-exported whole, and its door
+//! (`kind: auth`, key `webhook-signature`). The logic crate exposes only its registration entry, and its door
 //! (`busbar_auth_webhook_signature::door`) is exported as this image's ONE symbol,
 //! `busbar_plugin_door` (`export_door!`), so the library carries exactly the door
 //! a busbar build links.
@@ -12,7 +12,7 @@
 
 #![deny(unsafe_code)]
 
-pub use busbar_auth_webhook_signature::*;
+pub use busbar_auth_webhook_signature::{door, MACRO_DOOR};
 
 /// The exported door: the macro's `#[no_mangle]` symbol is the one exemption.
 #[allow(unsafe_code)]

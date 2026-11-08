@@ -12,9 +12,12 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use busbar_auth_webhook_signature::signature::MAX_FORM_PAIRS;
-use busbar_auth_webhook_signature::{Request, WebhookSignature};
+#[allow(dead_code, unused_imports)]
+#[path = "../src/lib.rs"]
+mod implementation;
 use busbar_contract::abi::sdk::auth_door::Verdict;
+use implementation::*;
+use signature::MAX_FORM_PAIRS;
 
 struct Counting;
 
