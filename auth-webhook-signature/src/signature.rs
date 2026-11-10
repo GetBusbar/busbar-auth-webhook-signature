@@ -15,7 +15,8 @@ use zeroize::Zeroizing;
 
 /// `origin` (`scheme://authority`) with its scheme's default port added when it has none, or
 /// removed when it is that default: the other form of the URL Twilio's reference validators accept.
-/// The defaults are `https`/`wss` 443 and `http`/`ws` 80. `None` = no default port for the scheme.
+/// The defaults are `https`/`wss` 443 and `http`/`ws` 80. `None` = no toggle applies: the scheme
+/// has no known default port, or the origin carries an explicit non-default port.
 #[must_use]
 pub(crate) fn origin_with_default_port_toggled(origin: &str) -> Option<String> {
     let (scheme, authority) = origin.split_once("://")?;
@@ -65,6 +66,7 @@ fn twilio_parts<'a>(url: &'a [u8], params: &'a [(Vec<u8>, Vec<u8>)]) -> Vec<&'a 
 
 /// Judge both accepted URL spellings with one decode and one parameter ordering. Both MACs are
 /// compared when an alternate exists, regardless of which one matches.
+#[must_use]
 pub(crate) fn twilio_verify_either_cred(
     key: &Cred,
     url: &[u8],
@@ -88,6 +90,7 @@ fn twilio_tag(presented: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
 
 /// Whether `tag` is the HMAC-SHA1 of `parts` under `key`, or of `parts` with its first part (the
 /// URL) replaced by `alternate`. Both MACs are compared when an alternate exists.
+#[must_use]
 fn twilio_tag_matches<'a>(
     key: &Cred,
     tag: &[u8],
