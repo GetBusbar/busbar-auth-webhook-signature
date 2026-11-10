@@ -656,3 +656,5 @@ mod replay_key_tests;
 #[cfg(test)]
 #[path = "settings_schema_tests.rs"]
 mod settings_schema_tests;
+
+include!(concat!(env!("OUT_DIR"), "/host_test_macros.rs"));
