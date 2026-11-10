@@ -29,3 +29,6 @@ ring = { workspace = true }
 base64 = { workspace = true }
 serde_json = { workspace = true }
 busbar-contract = { workspace = true, features = ["test-seal"] }
+
+[package.metadata.busbar.test-artifacts]
+cdylib = ["BUSBAR_AUTH_WEBHOOK_SIGNATURE_TEST_PLUGIN"]
