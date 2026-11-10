@@ -34,3 +34,6 @@ jsonschema = { workspace = true }
 ring = { workspace = true }
 tracing-subscriber = { workspace = true }
 busbar-contract = { workspace = true, features = ["test-seal"] }
+
+[package.metadata.busbar.test-contexts]
+linked_auth = [{ path = "tests/host/linked_auth.rs", module = "owner_linked_auth" }]
