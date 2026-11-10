@@ -223,7 +223,7 @@ fn verify_answer(
         groups_cap: groups.len() as u32,
         _reserved: 0,
     };
-    let c = private_answer(p.call(slot::VERIFY, &mut f));
+    let c = one_header_crossing(p, || private_answer(p.call(slot::VERIFY, &mut f)));
     assert_private_text(&buf);
     let verdict = match f.out.verdict {
         VERDICT_IDENTITY => "identity",

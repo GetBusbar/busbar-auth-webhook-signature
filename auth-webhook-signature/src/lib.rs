@@ -15,14 +15,15 @@ use busbar_contract::abi::auth::{AuthPoints, AuthTail};
 use busbar_contract::abi::mechanism::call::AbiStr;
 use busbar_contract::abi::mechanism::door::{MarkWord, Statement};
 use busbar_contract::abi::sdk::auth_door::{
-    carrier, verify_tail, with_tail, Answer, Strip, Verdict, VerifiedIdentity, VerifyPlugin,
-    VerifyView,
+    carrier, verify_tail, with_tail, Answer, Strip, Verdict, VerifiedIdentity, VerifyOp,
+    VerifyPlugin, VerifyView,
 };
 use busbar_contract::abi::sdk::cred::Cred;
 use busbar_contract::abi::sdk::door::{abi_str, statement};
 use busbar_contract::abi::sdk::life::Refusal;
 use busbar_contract::auth_calls::Replay;
 use serde::Deserialize;
+use std::task::Poll;
 
 /// The scheme alternative a claim names to be authenticated by this plugin.
 pub(crate) const SCHEME_ALTERNATIVE: &str = "webhook-signature";
@@ -563,7 +564,7 @@ impl VerifyPlugin for WebhookSignature {
         Ok(0)
     }
 
-    fn verify(&self, request: &VerifyView<'_>) -> Answer {
+    fn verify_ticketed(&self, request: &VerifyView<'_>, _op: &VerifyOp) -> Poll<Answer> {
         let headers = |name: &str| request.line(name);
         let keyed = self.current();
         let verdict = keyed.judge(&Request {
@@ -575,7 +576,7 @@ impl VerifyPlugin for WebhookSignature {
             now: request.timestamp(),
             headers: &headers,
         });
-        Answer {
+        Poll::Ready(Answer {
             strips: keyed
                 .settings
                 .variant
@@ -584,7 +585,7 @@ impl VerifyPlugin for WebhookSignature {
                 .map(|n| Strip::field(*n))
                 .collect(),
             ..verdict.into()
-        }
+        })
     }
 }
 
