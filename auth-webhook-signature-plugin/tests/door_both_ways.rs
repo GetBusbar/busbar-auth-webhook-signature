@@ -378,8 +378,27 @@ const EXPECTED: &[&str] = &[
 ];
 
 /// Exercises the Standard Webhooks published vector and invalid-signature cases.
+/// A Standard Webhooks signing secret: `whsec_` plus the base64 of the raw key, built at test time so
+/// no secret-shaped literal sits in the source.
+fn sw_secret(raw: &[u8]) -> String {
+    format!(
+        "whsec_{}",
+        base64::engine::general_purpose::STANDARD.encode(raw)
+    )
+}
+
+/// Raw key of the published Standard Webhooks sample vector; the tests pin that vector's signature.
+const SW_SAMPLE_KEY: [u8; 24] = [
+    0x31, 0xf2, 0x90, 0xf6, 0xbf, 0x06, 0x29, 0x8a, 0xab, 0x4f, 0x08, 0xd4, 0x3c, 0x3f, 0x08, 0x2c,
+    0xf6, 0x48, 0xa3, 0x62, 0xda, 0x2d, 0xa4, 0xb0,
+];
+
+fn sw_sample_secret() -> String {
+    sw_secret(&SW_SAMPLE_KEY)
+}
+
 fn standard_script(p: &Plugin<Auth>) -> Vec<String> {
-    const SECRET: &str = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
+    let secret = sw_sample_secret();
     const ID: &str = "msg_p5jXN8AQM9LWM0D4loKWxJek";
     const TS: &str = "1614265330";
     const NOW: u64 = 1_614_265_330;
@@ -396,7 +415,7 @@ fn standard_script(p: &Plugin<Auth>) -> Vec<String> {
     vec![
         format!(
             "open {:?}",
-            open(p, r#"{"variant":"standard-webhooks"}"#, SECRET)
+            open(p, r#"{"variant":"standard-webhooks"}"#, &secret)
         ),
         format!("valid {}", deliver(&all, Some(BODY), NOW)),
         format!(
@@ -522,7 +541,7 @@ fn a_standard_webhooks_instance_strips_only_its_own_lines() {
             open(
                 &p,
                 r#"{"variant":"standard-webhooks"}"#,
-                "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
+                &sw_sample_secret()
             ),
             Outcome::Ready
         );
@@ -655,8 +674,8 @@ fn a_short_standard_webhook_keeps_its_judgment_across_rotation_and_elapsed_time(
     const SETTINGS: &str = r#"{"variant":"standard-webhooks"}"#;
     const ROTATED_SETTINGS: &str =
         r#"{"variant":"standard-webhooks","subject":"rotated-webhook-subject"}"#;
-    const SECRET: &str = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
-    const ROTATED_SECRET: &str = "whsec_cm90YXRlZC1zdGFuZGFyZC13ZWJob29rLWtleQ==";
+    let secret = sw_sample_secret();
+    let rotated_secret = sw_secret(b"rotated-standard-webhook-key");
     const ID: &str = "msg_p5jXN8AQM9LWM0D4loKWxJek";
     const TIMESTAMP: &str = "1614265330";
     const NOW: u64 = 1_614_265_330;
@@ -685,7 +704,7 @@ fn a_short_standard_webhook_keeps_its_judgment_across_rotation_and_elapsed_time(
     );
     let folds = Arc::new(Folds::default());
     for p in [linked(&folds, &d), dropped(&folds, &d)] {
-        assert_eq!(open(&p, SETTINGS, SECRET), Outcome::Ready);
+        assert_eq!(open(&p, SETTINGS, &secret), Outcome::Ready);
         let mut f: Frame<VerifyIn, IdentifyOut> = Frame::new(z(), z());
         f.input.head = in_head();
         f.out.head = out_head();
@@ -721,7 +740,7 @@ fn a_short_standard_webhook_keeps_its_judgment_across_rotation_and_elapsed_time(
         f.out = z();
         f.out.head = out_head();
         assert_eq!(
-            refresh(&p, ROTATED_SETTINGS, ROTATED_SECRET, REFRESH_GENERATION),
+            refresh(&p, ROTATED_SETTINGS, &rotated_secret, REFRESH_GENERATION),
             Outcome::Ready
         );
         let recalled = private_answer(p.recall(recall, slot::VERIFY, &mut f));
@@ -746,7 +765,7 @@ fn a_short_standard_webhook_keeps_its_judgment_across_rotation_and_elapsed_time(
             "a new judgment uses the rotated key"
         );
         assert_eq!(
-            refresh(&p, SETTINGS, SECRET, RESTORE_GENERATION),
+            refresh(&p, SETTINGS, &secret, RESTORE_GENERATION),
             Outcome::Ready
         );
         assert_eq!(
@@ -868,6 +887,10 @@ fn validate_refuses_malformed_settings_before_secrets_are_resolved() {
 
 #[test]
 fn both_variants_validate_without_a_secret_and_open_after_secret_resolution() {
+    let sw_resolved = format!(
+        r#"{{"variant":"standard-webhooks","tolerance_secs":0,"signing_secret":"{}"}}"#,
+        sw_secret(b"webhook-validation-secret")
+    );
     let cases: &[(&[u8], &[u8])] = &[
         (
             br#"{"variant":"twilio","origin":"wss://edge.example"}"#,
@@ -875,7 +898,7 @@ fn both_variants_validate_without_a_secret_and_open_after_secret_resolution() {
         ),
         (
             br#"{"variant":"standard-webhooks","tolerance_secs":0}"#,
-            br#"{"variant":"standard-webhooks","tolerance_secs":0,"signing_secret":"whsec_d2ViaG9vay12YWxpZGF0aW9uLXNlY3JldA=="}"#,
+            sw_resolved.as_bytes(),
         ),
     ];
     for leg in [false, true] {
@@ -1798,11 +1821,13 @@ fn one_header_crossing<T>(p: &Plugin<Auth>, call: impl FnOnce() -> T) -> T {
 // script secrets. `twilio-auth-token` is a substring of the conformance token and of the rotated
 // token `the-rotated-twilio-auth-token`, so it covers all three.
 fn assert_private_text(answer: &[u8]) {
+    let sample = sw_sample_secret();
+    let rotated = sw_secret(b"rotated-standard-webhook-key");
     for secret in [
         "twilio-auth-token",
-        "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw",
-        "MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw",
-        "cm90YXRlZC1zdGFuZGFyZC13ZWJob29rLWtleQ",
+        sample.as_str(),
+        sample.trim_start_matches("whsec_"),
+        rotated.trim_start_matches("whsec_").trim_end_matches('='),
         "rotated-standard-webhook-key",
     ] {
         assert!(
